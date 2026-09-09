@@ -8,6 +8,15 @@ Hecho por JuanSAYAMAN y Remix.
 No hay backend ni base de datos: todo se procesa en el navegador. No requiere
 instalación ni compilación.
 
+La página es universal: lee automáticamente las IDs de cualquier archivo
+(`A1`, `VIP3`, `admin`, …), las agrupa por prefijo sin importar la plantilla del
+servidor y detecta la etiqueta de cada grupo desde sus badges del archivo
+(compartido → ese badge; distintos → tabla integrada → prefijo). Incluye
+desplegable de idioma **ES/EN** en la cabecera (`#lang-select` con opciones
+Español/English, se guarda en `localStorage`); todo el texto visible —interfaz,
+diagnósticos, reparaciones, organización, renumeración y exportación— está
+traducido en `STRINGS` (`app.js`).
+
 ## Stack y requisitos
 
 - Frontend puro: `index.html` + `styles.css` + `app.js` (sin bundler, sin framework).
@@ -98,8 +107,12 @@ Etiquetas de badge por prefijo (`ROLE_LABELS`, `app.js:44`):
 | F | Mod | N | N |
 | G | Donadores (VIP I) | | |
 
-`getRoleLabel(prefix)` (`app.js:62`) devuelve la etiqueta o el propio prefijo si no hay
-mapeo. `updateBadgeRank(badge, nuevoPrefijo)` (`app.js:90`) deja la base del badge y
+`getRoleLabel(prefix)` devuelve la etiqueta o el propio prefijo si no hay
+mapeo. La etiqueta efectiva por grupo la da `getGroupBadgeLabel(prefix)` (híbrida):
+si todos los miembros del grupo comparten un badge (ignorando vacíos/`default`),
+usa ese badge detectado del archivo; si difieren, usa la tabla; si no hay mapeo,
+el propio prefijo. Así cualquier plantilla funciona sin configuración.
+`updateBadgeRank(badge, nuevoPrefijo)` deja la base del badge y
 solo el rango destino, **esté en la posición que esté y sin apilar jamás**:
 - `"O5 | o.O"` + `N` → `"N | o.O"`, y de vuelta + `A` → `"O5 | o.O"`.
 - Rango en 1ª/2ª/3ª palabra con espacios o `|`/`/`/`:`: `"ELITE O5 FORCE"` + `B` →
@@ -219,6 +232,21 @@ hooks (`parseConfig`, `generateConfig`, `buildRemoteAdminExport`, `buildRemoteAd
 byte (`tests/fixtures/remoteadmin-lossless.txt`), CRLF/BOM, organización por jerarquía,
 renumeración por rangos, validaciones bloqueantes, badges masivos y comprobaciones de
 HTML/CSS (CDNs versionados, CSP, IDs únicos y referenciados).
+
+## Idioma ES/EN
+
+- Desplegable `#lang-select` en la cabecera (Español/English); la elección persiste en
+  `localStorage` (`ra-lang`) y el español es el idioma por defecto.
+- Todo el texto visible vive en `STRINGS = { es: {...}, en: {...} }` (`app.js`) y se
+  obtiene con `t('seccion.clave', {var})`; el HTML estático usa atributos
+  `data-i18n` / `data-i18n-ph` / `data-i18n-aria` / `data-i18n-title` aplicados por
+  `applyI18n()`. Los nombres propios no se traducen: IDs, roles, badges, colores,
+  permisos nativos, `RemoteAdmin`/`EXILED`/`LabAPI` ni el contenido del archivo.
+- `setLanguage(lang)` reaplica la interfaz, re-renderiza el editor y regenera los
+  paneles abiertos (diagnóstico, exportación, organización, renumeración) sin perder
+  su estado.
+- Los tests verifican paridad total de claves ES/EN, idioma por defecto y diagnósticos
+  en ambos idiomas.
 
 ## Seguridad y accesibilidad
 

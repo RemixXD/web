@@ -63,6 +63,50 @@ function getRoleLabel(prefix) {
     return ROLE_LABELS[String(prefix || '')] || String(prefix || '');
 }
 
+function getSharedGroupBadge(prefix, state = parsedData) {
+    const key = String(prefix || '');
+    const group = state?.groups?.[key];
+    if (!group || !Array.isArray(group.members)) return null;
+    const vals = [];
+    group.members.forEach(member => {
+        const badge = String(member?.badge ?? '').trim();
+        if (!badge || badge.toLowerCase() === 'default') return;
+        if (!vals.some(v => v.toLowerCase() === badge.toLowerCase())) vals.push(badge);
+    });
+    if (vals.length !== 1) return null;
+    if (group.isNumbered && group.members.length < 2) return null;
+    return vals[0];
+}
+
+function getGroupBadgeLabel(prefix, state = parsedData) {
+    const key = String(prefix || '');
+    const shared = getSharedGroupBadge(key, state);
+    if (shared) return shared;
+    if (ROLE_LABELS[key] !== undefined) return ROLE_LABELS[key];
+    return key;
+}
+
+function groupLabelSuffix(prefix) {
+    try {
+        const label = getGroupBadgeLabel(prefix);
+        if (label && String(label).toLowerCase() !== String(prefix || '').toLowerCase()) {
+            return ` <span class="group-label" style="color: var(--text-muted); font-size: 0.75rem; font-weight: 400;">· ${escapeHtml(label)}</span>`;
+        }
+    } catch (_) {}
+    return '';
+}
+
+function getDetectedRankTokens() {
+    const out = [];
+    try {
+        Object.keys(parsedData.groups || {}).forEach(prefix => {
+            const label = getSharedGroupBadge(prefix, parsedData);
+            if (label && !out.some(v => v.toLowerCase() === label.toLowerCase())) out.push(label);
+        });
+    } catch (_) {}
+    return out;
+}
+
 function getRoleHierarchyIndex(prefix) {
     const idx = REMOTE_ADMIN_ROLE_HIERARCHY.indexOf(String(prefix || '').toUpperCase());
     return idx >= 0 ? idx : REMOTE_ADMIN_ROLE_HIERARCHY.length;
@@ -88,7 +132,7 @@ function escapeRegExpToken(value) {
 //   exacta. Así una "a" española en medio del texto o "A TOPE" nunca se tocan.
 // - Palabras normales ("TEAM", "CAPITAN", "o.O", "amo a mi clan") quedan intactas.
 function updateBadgeRank(currentBadge, newPrefix) {
-    const label = getRoleLabel(newPrefix);
+    const label = getGroupBadgeLabel(newPrefix);
     const tidy = (str) => String(str || '').replace(/\s+/g, ' ')
         .replace(/\s*([|/:])(\s*[|/:])+\s*/g, ' $1 ')
         .replace(/^[|/:]\s+|\s+[|/:]$/g, '')
@@ -107,7 +151,7 @@ function updateBadgeRank(currentBadge, newPrefix) {
         if (letters.length <= 2) return true;
         return /^[A-Z_][A-Z0-9_.-]*$/.test(t);
     };
-    const multiCands = [...new Set([...Object.values(ROLE_LABELS).filter(v => v && v.length >= 2), ...REMOTE_ADMIN_ROLE_HIERARCHY.filter(p => p.length >= 2)])].sort((a, b) => b.length - a.length);
+    const multiCands = [...new Set([...getDetectedRankTokens(), ...Object.values(ROLE_LABELS).filter(v => v && v.length >= 2), ...REMOTE_ADMIN_ROLE_HIERARCHY.filter(p => p.length >= 2)])].sort((a, b) => b.length - a.length);
     const labelSrc = (cand) => `(^|${SEP})${escapeRegExpToken(cand)}(?:\\s+\\d+)?(?=${SEP}|$)`;
     const singleTrailSrc = `${SEP}([A-N])\\s*$`;
     const singleLeadSrc = `^([A-N])(?=\\s*[|/:])`;
@@ -190,6 +234,1265 @@ function updateBadgeRank(currentBadge, newPrefix) {
     }
     return s;
 }
+
+// ============================
+// Idioma / Language (ES/EN)
+// ============================
+const SUPPORTED_LANGS = Object.freeze(['es', 'en']);
+const STRINGS = { es: {}, en: {} };
+let currentLang = 'es';
+try {
+    const storedLang = (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function')
+        ? localStorage.getItem('ra-lang') : null;
+    if (storedLang === 'es' || storedLang === 'en') currentLang = storedLang;
+} catch (_) { /* sin almacenamiento persistente (tests) */ }
+
+function t(key, params) {
+    const lookup = (dict) => String(key || '').split('.').reduce(
+        (node, part) => (node && typeof node === 'object' ? node[part] : undefined), dict);
+    let value = lookup(STRINGS[currentLang]);
+    if (value === undefined) value = lookup(STRINGS.es);
+    if (typeof value !== 'string') return String(key || '');
+    if (!params) return value;
+    return value.replace(/\{(\w+)\}/g, (m, name) => (
+        params[name] === undefined || params[name] === null ? '' : String(params[name])));
+}
+
+function applyI18n() {
+    if (typeof document === 'undefined' || !document.querySelectorAll) return;
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+        if (el && typeof el.getAttribute === 'function') {
+            const v = t(el.getAttribute('data-i18n'));
+            if (v) el.textContent = v;
+        }
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach((el) => {
+        if (el && typeof el.setAttribute === 'function' && typeof el.getAttribute === 'function') {
+            el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph')));
+        }
+    });
+    document.querySelectorAll('[data-i18n-aria]').forEach((el) => {
+        if (el && typeof el.setAttribute === 'function' && typeof el.getAttribute === 'function') {
+            el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));
+        }
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+        if (el && typeof el.setAttribute === 'function' && typeof el.getAttribute === 'function') {
+            el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
+        }
+    });
+    const langSelect = (typeof document.getElementById === 'function') ? document.getElementById('lang-select') : null;
+    if (langSelect && 'value' in langSelect) {
+        try { langSelect.value = currentLang; } catch (_) {}
+    }
+    if (typeof document !== 'undefined' && document.documentElement) {
+        try { document.documentElement.lang = currentLang; } catch (_) {}
+    }
+}
+
+function setLanguage(lang, options = {}) {
+    if (!SUPPORTED_LANGS.includes(lang)) return currentLang;
+    currentLang = lang;
+    try {
+        if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
+            localStorage.setItem('ra-lang', lang);
+        }
+    } catch (_) {}
+    applyI18n();
+    if (options.render === false) return currentLang;
+    try {
+        if (typeof renderRAEditor === 'function' && hasLoadedRemoteAdmin && currentMode === 'ra') renderRAEditor();
+    } catch (_) {}
+    try {
+        if (typeof updateRemoteAdminHealth === 'function') updateRemoteAdminHealth(activeRemoteAdminDiagnostics || null);
+    } catch (_) {}
+    try {
+        if (typeof diagnosticsModal !== 'undefined' && diagnosticsModal && diagnosticsModal.classList && diagnosticsModal.classList.contains('active')) {
+            refreshRemoteAdminDiagnostics({ render: true });
+        }
+    } catch (_) {}
+    try {
+        if (typeof exportModal !== 'undefined' && exportModal && exportModal.classList && exportModal.classList.contains('active')) {
+            const orgVisible = remoteAdminOrganizationPanel && !remoteAdminOrganizationPanel.hidden;
+            const renVisible = remoteAdminIdRenumberPanel && !remoteAdminIdRenumberPanel.hidden;
+            const keptOrg = orgVisible ? activeRemoteAdminOrganization : null;
+            const keptRen = renVisible ? activeRemoteAdminIdRenumber : null;
+            if (activePermissionsExportFramework) renderPermissionsExportPreview(activePermissionsExportFramework, false);
+            else if (activeRemoteAdminExportResult && currentMode === 'ra') renderRemoteAdminExportPreview(false, false);
+            if (keptOrg) renderRemoteAdminOrganizationComparison(keptOrg);
+            if (keptRen) renderRemoteAdminIdRenumberPreview(keptRen);
+        }
+    } catch (_) {}
+    return currentLang;
+}
+
+Object.assign(STRINGS.es, {
+    _langName: 'Español',
+    diag: {
+        title: 'Diagnóstico RemoteAdmin',
+        closeAria: 'Cerrar diagnóstico',
+        countsAria: 'Totales del diagnóstico',
+        searchPh: 'Buscar código, ID, usuario o mensaje…',
+        searchAria: 'Buscar diagnóstico',
+        show: 'Mostrar',
+        filterAll: 'Todos',
+        filterError: 'Errores críticos',
+        filterWarning: 'Advertencias',
+        filterInfo: 'Información',
+        filterSafe: 'Reparación segura',
+        filterConfirm: 'Requieren decisión',
+        selectionAria: 'Selección de problemas',
+        selectVisible: 'Seleccionar visibles',
+        clearSelection: 'Limpiar selección',
+        undoRepair: 'Deshacer última reparación',
+        undoAll: 'Deshacer todos los cambios',
+        restoreOriginal: 'Restaurar original',
+        resolveSelected: 'Resolver seleccionados',
+        resolveSafe: 'Resolver problemas seguros',
+        countErrors: 'Errores críticos',
+        countWarnings: 'Advertencias',
+        countInfo: 'Información',
+        countRepairable: 'Reparables',
+        countDecisions: 'Requieren decisión',
+        summary: '{users} usuario(s), {roles} ID(s) interna(s), {perms} permiso(s). {tail}',
+        summaryOk: 'Sin errores críticos.',
+        summaryBlocked: 'La exportación permanece bloqueada por errores críticos.',
+        emptyFiltered: 'Ningún diagnóstico coincide con el filtro.',
+        emptyClean: 'RemoteAdmin analizado correctamente. No se encontraron problemas.',
+        selManual: 'Puedes seleccionarlo para incluirlo en el resumen; requerirá edición manual.',
+        selConfirm: 'Al resolver la selección se solicitará una decisión antes de modificarlo.',
+        selSafe: 'Este problema admite una reparación automática segura.',
+        selAria: 'Seleccionar {code}',
+        sevError: 'Error crítico',
+        sevWarning: 'Advertencia',
+        sevInfo: 'Información',
+        repairSafe: 'Reparación segura',
+        repairConfirm: 'Requiere decisión',
+        repairManual: 'Edición manual',
+        actResolve: 'Resolver',
+        actReviewDecision: 'Revisar decisión',
+        actReview: 'Revisar',
+        actGoto: 'Ir al problema',
+        actIgnore: 'Ignorar',
+        actUnignore: 'Dejar de ignorar',
+        locLine: ' · línea {line}',
+        locRole: ' · ID {role}',
+        locAffects: ' · Afecta: {list}',
+        resolveSelectedN: 'Resolver seleccionados ({n})',
+        resolveSafeN: 'Resolver problemas seguros ({n})',
+        secProps: 'Propiedades',
+        secGlobal: 'Configuración global',
+        secFormat: 'Formato'
+    },
+    nav: {
+        import: 'Importar',
+        editor: 'Editor',
+        language: 'Idioma'
+    },
+    header: {
+        exportRa: 'Exportar RemoteAdmin',
+        exiled: 'Permissions EXILED',
+        labapi: 'Permissions Lab API'
+    },
+    mode: {
+        ra: '🛡️ Modo: Remote Admin',
+        invalidFile: 'El archivo no es una configuración válida de Remote Admin.'
+    },
+    common: {
+        cancel: 'Cancelar',
+        close: 'Cerrar',
+        save: 'Guardar',
+        add: 'Añadir',
+        delete: 'Eliminar',
+        edit: 'Editar',
+        warnings: 'Advertencias',
+        noWarnings: 'Sin advertencias.',
+        search: 'Buscar',
+        copy: 'Copiar',
+        download: 'Descargar',
+        confirm: 'Confirmar'
+    },
+    importView: {
+        title: 'Importar Configuración Actual',
+        desc: 'Pega aquí el contenido completo de tu archivo de configuración del Remote Admin (config_remoteadmin.txt).',
+        configLabel: 'Contenido de la configuración',
+        configPh: '# Pega aquí tu configuración...',
+        parse: 'Leer Configuración',
+        upload: 'Subir Archivo .txt',
+        empty: 'Por favor, pega la configuración.'
+    },
+    editor: {
+        title: 'Grupos & Miembros',
+        searchPh: 'Buscar miembro...',
+        searchAria: 'Buscar miembro',
+        validate: 'Validar RemoteAdmin',
+        repair: 'Reparar RemoteAdmin',
+        badgeBulk: 'Carga masiva de badges',
+        addGroup: 'Añadir Grupo',
+        addCategoryTitle: 'Añadir Categoría'
+    },
+    health: {
+        pending: 'Sin validar',
+        valid: 'RemoteAdmin válido',
+        warnings: '{count} advertencia(s)',
+        errors: '{count} error(es)'
+    },
+    action: {
+        copied: '¡Copiado!',
+        copyFail: 'No se pudo copiar automáticamente. Selecciona el texto y cópialo manualmente.',
+        downloadBlocked: 'El archivo RemoteAdmin contiene errores bloqueantes. Revisa la previsualización antes de descargar.',
+        downloadFail: 'No se pudo descargar el archivo: {error}',
+        downloadFailBrowser: 'el navegador rechazó la descarga.',
+        permsBlocked: 'La configuración contiene errores bloqueantes. Revisa la previsualización antes de descargar.'
+    },
+    healthExtra: {
+        blockDownload: '{count} error(es) crítico(s) bloquean la descarga hasta resolverlos.'
+    },
+    member: {
+        deleteConfirm: '¿Eliminar a este miembro?',
+        invalidId: 'Introduce un ID válido: un ID numérico @steam/@discord o un usuario @northwood.',
+        kickRange: 'Los valores de kick power deben estar entre 0 y 255.',
+        addTitle: 'Añadir Miembro',
+        closeAria: 'Cerrar formulario de miembro',
+        name: 'Nombre',
+        namePh: 'Ej. YAN',
+        notes: 'Notas / Comentarios (Opcional)',
+        notesPh: 'Ej. antes B3, vence 09 Junio...',
+        steamId: 'SteamID (Obligatorio)',
+        steamIdPh: 'Ej. 76561198841587908@steam',
+        badge: 'Texto del Badge',
+        badgePh: 'Ej. SERVER OWNER',
+        color: 'Color del Badge',
+        kickPower: 'Kick Power',
+        reqKick: 'Req. Kick Power',
+        cover: 'Cover',
+        hidden: 'Hidden',
+    },
+    group: {
+        newPrompt: 'Nombre del nuevo grupo (ej. A, B, VIP):',
+        invalidName: 'El grupo solo puede contener letras, números y guiones bajos, y no puede comenzar con un número.',
+        exists: 'El grupo "{prefix}" ya existe.',
+        deleteConfirm: '¿Eliminar el Grupo {prefix} y a todos sus miembros?'
+    },
+    move: {
+        selectTarget: 'Por favor selecciona un grupo de destino válido.',
+        selectGroup: 'Selecciona un grupo...'
+    },
+    badgeIssue: {
+        malformedLine: 'La línea no contiene una clave seguida de dos puntos.',
+        unknownKey: 'La clave "{key}" no está reconocida y será ignorada.',
+        duplicateField: 'La clave "{key}" está repetida; se utilizará su último valor.',
+        missingOwner: 'Falta el valor obligatorio "badge de:".',
+        emptyOwnerName: 'El valor de "badge de:" debe contener un nombre además de @.',
+        ownerWithoutAt: 'El propietario no comienza con @; se conservará exactamente como fue escrito.',
+        emptyBadge: 'El campo _badge no puede estar vacío.',
+        missingColor: 'Falta el campo obligatorio _color.',
+        invalidColor: 'El color "{color}" no existe en el selector actual.',
+        colorSuggestion: ' ¿Quisiste escribir "{suggestion}"?',
+        missingSteam: 'Falta el campo obligatorio _steamID.',
+        invalidSteam: 'El valor debe ser un SteamID64 público individual de 17 dígitos, sin @steam.',
+        dupInput: 'SteamID repetido dentro del texto; coincide con el registro {n}.',
+        conflictInput: 'SteamID repetido con información diferente al registro {n}.',
+        dupExisting: 'El SteamID ya aparece más de una vez en RemoteAdmin; corrige esa ambigüedad antes de importar.',
+        existDup: 'El SteamID ya existe en el rol {role} con los mismos datos.',
+        existConflict: 'El SteamID ya existe en el rol {role} con información diferente.',
+        sharedConflict: 'El rol {role} es compartido por varios usuarios; RemoteAdmin no admite un badge o color individual.',
+        targetRequired: 'Selecciona un grupo para los SteamID nuevos.',
+        targetNotFound: 'El grupo destino "{group}" no existe.',
+        sharedBatch: 'El grupo {group} está vacío y otro registro propone un badge o color distinto; elige una sola combinación.',
+        sharedTarget: 'El grupo {group} usa un rol compartido; el badge y color deben coincidir con los del rol.',
+        multiMutations: 'Hay más de una acción de reemplazo o actualización para el SteamID {steam}; selecciona solo una.',
+        multiShared: 'Hay varias combinaciones de badge y color seleccionadas para el rol compartido {group}; elige solo una.',
+        steamChanged: 'El SteamID {steam} apareció después de la vista previa y fue omitido.',
+        targetUnavailable: 'El grupo destino ya no está disponible.',
+        sharedStale: 'El grupo {group} usa un rol compartido; el badge y color ya no coinciden con los del rol.',
+        notUnique: 'No se pudo resolver de forma única el SteamID {steam}.'
+    },
+    badgeBulk: {
+        notAnalyzed: 'Sin analizar.',
+        needRecords: 'Pega al menos un registro para analizarlo.',
+        selectGroup: 'Selecciona un grupo',
+        statusValid: 'Válido',
+        statusWarning: 'Válido con avisos',
+        statusDuplicate: 'Duplicado',
+        statusConflict: 'Conflicto',
+        statusInvalid: 'Inválido',
+        noIssues: 'Sin errores.',
+        lineIssue: 'Línea {line}: {message}',
+        actionFor: 'Acción para SteamID {id}',
+        actCancel: 'Cancelar registro',
+        actOmit: 'Omitir',
+        actReplace: 'Reemplazar existente',
+        actUpdate: 'Actualizar campos modificados',
+        actImport: 'Usar este registro',
+        actImportCombo: 'Usar esta combinación',
+        actAdd: 'Añadir',
+        sumTotal: 'Total',
+        sumValid: 'Válidos',
+        sumInvalid: 'Inválidos',
+        sumDupes: 'Duplicados/conflictos',
+        sumOmitted: 'Omitidos/cancelados',
+        applyHeading: 'Hay registros pendientes de corregir:',
+        applyRecord: 'Registro {n}, ',
+        applyLine: '{prefix}línea {line}: {message}',
+        applyInvalid: ' {count} registro(s) inválido(s) permanecen en la vista previa.',
+        changedAfter: 'La configuración RemoteAdmin cambió después de la vista previa. Analiza nuevamente los registros.',
+        multiMutationsAlert: 'Hay varias acciones mutantes para el mismo SteamID. Conserva solo una antes de confirmar.',
+        multiSharedAlert: 'Hay varias combinaciones de badge y color seleccionadas para el mismo rol compartido. Conserva solo una.',
+        title: 'Carga masiva de badges',
+        closeAria: 'Cerrar carga masiva de badges',
+        intro: 'Pega uno o varios registros. Los datos se analizarán y previsualizarán antes de modificar la configuración actual.',
+        inputLabel: 'Registros de badges',
+        inputPh: 'badge de: @Endercruz\n_badge: Endercruz\n_color: orange\n_steamID: 76561199835925257',
+        targetGroup: 'Grupo de destino',
+        analyze: 'Analizar y previsualizar',
+        clear: 'Limpiar',
+        previewAria: 'Vista previa de la carga masiva de badges',
+        caption: 'Registros analizados antes de confirmar la importación',
+        thLine: 'Línea',
+        thOwner: 'Nota o propietario',
+        thBadge: 'Badge',
+        thColor: 'Color',
+        thSteam: 'SteamID64',
+        thStatus: 'Estado',
+        thIssue: 'Error o advertencia',
+        thAction: 'Acción',
+        confirm: 'Confirmar importación',
+        finished: 'Carga finalizada: {imported} añadido(s), {replaced} reemplazado(s), {updated} actualizado(s), {omitted} omitido(s), {cancelled} cancelado(s) y {invalid} inválido(s).'
+    },
+    memberModal: {
+        addToGroup: 'Añadir Miembro al Grupo {group}',
+        edit: 'Editar Miembro'
+    },
+    permModal: {
+        groupTitle: 'Permisos del Grupo {group}',
+        memberTitle: 'Permisos de {name}'
+    },
+    bulkMembers: {
+        added: 'Se añadieron {count} miembros al grupo {group}.',
+        autoNote: 'Añadido masivamente'
+    },
+    bulk: {
+        title: 'Carga Masiva de Miembros',
+        descA: 'Pega tu lista de miembros. El sistema extraerá automáticamente el',
+        ids: 'SteamID/DiscordID',
+        and: 'y el',
+        name: 'Nombre',
+        listLabel: 'Lista de miembros',
+        process: 'Procesar y Añadir',
+        inputPh: 'Ej:\n76561198841587908@steam YAN\n123456789012345678@discord Usuario Dos',
+        closeAria: 'Cerrar carga masiva'
+    },
+    promote: {
+        title: 'Ascender a',
+        closeAria: 'Cerrar ventana de ascenso',
+        targetGroup: 'Grupo de destino',
+        desc: 'El miembro mantendrá su badge (actualizando el rango), color, cover y hidden. Adoptará los permisos, Kick Power y Required Kick Power del grupo destino.',
+        confirm: 'Confirmar Ascenso'
+    },
+    demote: {
+        title: 'Descender a',
+        closeAria: 'Cerrar ventana de descenso',
+        targetGroup: 'Grupo de destino',
+        desc: 'El miembro mantendrá su badge (actualizando el rango), color, cover y hidden. Adoptará los permisos, Kick Power y Required Kick Power del grupo destino.',
+        confirm: 'Confirmar Descenso'
+    },
+    cards: {
+        noResults: 'No se encontraron resultados.',
+        groupName: 'Grupo {prefix}',
+        noMembers: 'No hay miembros.',
+        noName: 'Sin Nombre',
+        promote: 'Ascender',
+        demote: 'Descender',
+        perms: 'Permisos',
+        editBtn: 'Editar',
+        hiddenYes: 'Sí',
+        hiddenNo: 'No',
+        permsCount: 'Permisos',
+        categories: 'Categorías',
+        categoryName: 'Categoría {name}',
+        groupPerms: 'Permisos del Grupo',
+        groupPermsTitle: 'Permisos del Grupo',
+        addMember: 'Añadir Miembro',
+        addMemberTitle: 'Añadir Miembro',
+        noMembersInCat: 'No hay miembros en esta categoría.',
+        promoteTitle: 'Ascender rango',
+        promoteAria: 'Ascender rango del miembro',
+        demoteTitle: 'Descender rango',
+        demoteAria: 'Descender rango del miembro',
+        permsTitle: 'Permisos',
+        permsAria: 'Permisos del miembro',
+        editAria: 'Editar miembro',
+        deleteAria: 'Eliminar miembro',
+        noPerms: 'Sin permiso: {list}',
+        targetOpt: 'Grupo {prefix} ({label}) - {count} miembros',
+        bulkTitle: 'Carga Masiva - Grupo {prefix}',
+        sharedRole: ' (rol compartido)',
+        deleteGroupTitle: 'Eliminar Grupo',
+        deleteGroupAria: 'Eliminar grupo',
+        deleteAria: 'Eliminar miembro',
+        dragTitle: 'Arrastrar para reordenar'
+    },
+    repair: {
+        rollbackParser: 'El parser no recuperó todas las secciones requeridas.',
+        rollbackData: 'La comparación semántica detectó pérdida de datos.',
+        rollbackNoChange: 'La reparación no resolvió el diagnóstico seleccionado.',
+        rolledBack: 'La reparación fue revertida: {reason}',
+        noSafeSelection: 'Las selecciones no contienen reparaciones automáticas seguras.',
+        appliedSafe: 'Se aplicaron {count} reparación(es) seguras. El archivo fue analizado nuevamente.',
+        applyFixConfirm: '¿Aplicar la corrección propuesta para {code}?',
+        cannotApplyFix: 'No se pudo aplicar: {reason}',
+        cannotApplyDefault: 'la corrección no produjo un resultado verificable.',
+        parserLost: 'La resolución fue revertida porque el parser no pudo recuperar el archivo completo.',
+        manualRequired: 'Este problema requiere editar el valor o elegir una relación válida; no se aplicó ningún cambio automático.',
+        selectOne: 'Selecciona al menos un problema antes de continuar.',
+        unresolvedManual: '{count} problema(s) seleccionado(s) requieren edición manual y no fueron modificados:\n{list}',
+        unresolvedLine: ' (línea {line})',
+        loadFirst: 'Primero carga una configuración RemoteAdmin.',
+        undoBlocked: 'El contenido cambió después de la reparación; no se deshará automáticamente para evitar pérdida de trabajo.',
+        undoAllConfirm: '¿Deshacer todas las reparaciones realizadas durante esta sesión?',
+        restoreConfirm: '¿Restaurar el RemoteAdmin exactamente como se cargó al iniciar esta sesión?'
+    },
+    choice: {
+        keepLine: 'Escribe la línea que deseas conservar:\n{list}',
+        removeConflicts: 'Se eliminarán {count} asociación(es) conflictivas y se conservará la línea {line}. ¿Continuar?',
+        keepValue: 'Escribe la línea cuyo valor deseas conservar:\n{list}',
+        keepSingle: 'Se conservará una sola declaración de {name}. ¿Continuar?',
+        combinePrompt: 'Escribe “combinar” para unir las IDs o la línea que deseas conservar:\n{list}',
+        combineDefault: 'combinar',
+        combineConfirm: 'Se combinarán las asignaciones duplicadas de {name}. ¿Continuar?',
+        keepOneConfirm: 'Se conservará solamente la declaración de la línea {line}. ¿Continuar?',
+        keepRole: 'Escribe la línea de {role} que deseas conservar:\n{list}',
+        removeRoles: 'Se eliminarán {count} declaraciones duplicadas de {role}. ¿Continuar?'
+    },
+    export: {
+        modalTitle: 'Nueva Configuración Generada',
+        closeAria: 'Cerrar configuración generada',
+        summaryTitle: 'Resumen de exportación',
+        framework: 'Framework de destino:',
+        statsAria: 'Totales de la exportación',
+        statUsers: 'Usuarios',
+        statGroups: 'Grupos exportados',
+        statPerms: 'Permisos únicos',
+        raOptionsAria: 'Opciones de exportación RemoteAdmin',
+        filename: 'Nombre del archivo',
+        filenameHelp: 'Se conservará el nombre del archivo importado siempre que sea posible.',
+        formatLabel: 'Formato detectado',
+        formatHelp: 'Texto compatible con la configuración cargada.',
+        policy: 'Política para permisos sin equivalencia',
+        policySafe: 'Conversión segura (recomendada)',
+        policyWildcard: 'Comodín/referencia explícita (.*)',
+        policyHelp: 'La opción segura conserva únicamente permisos con equivalencia conocida.',
+        policyWildcardHelp: 'Advertencia: .* concede todos los permisos de todos los plugins a cada grupo.',
+        policySafeHelp: 'Los permisos nativos de RemoteAdmin no se convierten en nodos de plugins sin un mapeo explícito.',
+        tabRa: 'Remote Admin',
+        tabExiled: 'Permissions EXILED',
+        tabLabapi: 'Permissions Lab API',
+        titleRa: 'Previsualización — RemoteAdmin',
+        titlePerms: 'Previsualización — Permissions {framework}',
+        formatDetail: 'Texto RemoteAdmin {ext} · {enc}{bom} · {le} · {final}',
+        withBom: ' con BOM',
+        withoutBom: ' sin BOM',
+        finalLine: 'línea final presente',
+        noFinalLine: 'sin línea final',
+        issueError: 'Error',
+        issueWarning: 'Aviso',
+        needPreview: 'Primero carga una configuración válida de RemoteAdmin.',
+        needPreviewValid: 'Primero genera una previsualización válida de RemoteAdmin.',
+        undoRenumberTitle: 'El contenido cambió después de la renumeración y ya no puede deshacerse automáticamente.',
+        diagnostics: 'Diagnóstico',
+        organize: 'Organizar RemoteAdmin',
+        renumber: 'Reorganizar IDs',
+        undoRenumber: 'Deshacer reorganización',
+        cancelOrg: 'Cancelar organización',
+        applyOrg: 'Aplicar organización',
+        applyRenumber: 'Aplicar reorganización',
+        copyTab: 'Copiar Pestaña Actual',
+        downloadTab: 'Descargar Pestaña Actual',
+        analyzing: 'Analizando…',
+        copyFail: 'No se pudo copiar automáticamente. Selecciona el texto y cópialo manualmente.'
+    },
+    issue: {
+        blocking: 'Bloqueo',
+        existing: 'Error existente',
+        warning: 'Aviso',
+        error: 'Error'
+    },
+    org: {
+        statusOk: 'El archivo ya utiliza el orden jerárquico esperado.',
+        statusSafe: 'La organización es segura y puede aplicarse. Los errores existentes seguirán bloqueando la descarga.',
+        statusDone: 'Organización terminada. La relectura y la comparación semántica fueron correctas.',
+        statusBlocked: 'El resultado se generó, pero contiene conflictos que deben resolverse antes de aplicarlo.',
+        mUsers: 'usuarios',
+        mGroups: 'grupos',
+        mMembers: 'miembros movidos',
+        mBlocks: 'bloques movidos',
+        mLists: 'listas ordenadas',
+        mBlanks: 'líneas vacías eliminadas',
+        mWarnings: 'advertencias',
+        mFileErrors: 'errores del archivo',
+        mBlocking: 'bloqueos de organización',
+        noIssues: 'Sin conflictos. Comentarios, propiedades desconocidas y datos semánticos conservados.',
+        fail: 'No se pudo organizar RemoteAdmin: {error}',
+        failStructural: 'el análisis estructural falló.',
+        cannotApply: 'La organización no puede aplicarse porque no hay cambios o la transformación tiene un bloqueo propio.',
+        appliedNotice: 'La organización fue aplicada al estado central y puede deshacerse desde Diagnóstico.',
+        historyLabel: 'Organización estructural de RemoteAdmin',
+        compareTitle: 'Comparación de organización',
+        original: 'Original',
+        organized: 'Organizado'
+    },
+    ren: {
+        rowReserved: 'Reservada',
+        rowReusedDeclared: 'Reutilizada (declarada sin uso)',
+        rowReusedUndeclared: 'Asignada (hueco disponible)',
+        rowChanged: 'Se renumerará',
+        rowUnchanged: 'Sin cambios',
+        rowsEmpty: 'No hay IDs modificadas con el filtro actual.',
+        statusDone: 'Todas las IDs numeradas ya son consecutivas desde 1.',
+        statusSafe: 'La renumeración es segura ({changed} cambios, {reused} reutilizadas). Los errores existentes seguirán bloqueando la descarga.',
+        statusReady: 'Mapa calculado: {changed} cambios, {reused} IDs reutilizadas. Ninguna identidad ni configuración fue alterada.',
+        statusBlocked: 'La renumeración fue calculada, pero existen conflictos que bloquean su aplicación.',
+        mIds: 'IDs analizadas',
+        mChanged: 'modificadas',
+        mUnchanged: 'sin cambios',
+        mReused: 'reutilizadas',
+        mReserved: 'reservadas',
+        mRanges: 'rangos',
+        mFileErrors: 'errores del archivo',
+        mBlocking: 'bloqueos',
+        availTitle: 'IDs disponibles detectadas:',
+        availDeclared: 'declarada',
+        availReserved: 'reservada',
+        availFree: 'disponible',
+        availMore: '+{count} más',
+        reusedTitle: 'IDs que serán reutilizadas:',
+        reusedDeclared: 'declarada sin uso',
+        reusedFree: 'disponible no declarada',
+        rangeChanged: '{prefix}: {changed} cambio(s){reuse}',
+        rangeReuse: ' ({reused} reutilizada(s))',
+        rangeClean: '{prefix}: sin cambios',
+        noIssues: 'SteamID, badges, colores, permisos, notas y propiedades desconocidas fueron conservados.',
+        needPreview: 'Primero genera una previsualización de RemoteAdmin.',
+        analyzing: 'Analizando…',
+        fail: 'No se pudieron reorganizar las IDs: {error}',
+        failStructural: 'el análisis estructural falló.',
+        cannotApply: 'La reorganización no puede aplicarse porque no hay cambios o la transformación tiene un bloqueo propio.',
+        appliedNotice: 'Reorganización aplicada: {changed} ID(s) modificadas en {ranges} rango(s).',
+        appliedHistory: 'Reorganización de {changed} ID(s) internas',
+        appliedRemaining: '\n\nAviso: permanecen {count} error(es) del archivo; la descarga continúa bloqueada.',
+        appliedOk: 'Reorganización completada correctamente.\n\nRangos procesados: {ranges}\nIDs modificadas: {changed}\nIDs sin cambios: {unchanged}\n\n✓ SteamID conservadas\n✓ Badges y colores conservados\n✓ Permisos actualizados\n✓ Relectura correcta{remaining}',
+        cannotUndo: 'No se puede deshacer porque el RemoteAdmin cambió después de la reorganización.',
+        undoConfirm: 'Se restaurará la numeración anterior de esta sesión. ¿Continuar?',
+        undone: 'La reorganización de IDs fue deshecha correctamente.',
+        previewTitle: 'Previsualización de IDs',
+        optReuseDeclared: 'Reutilizar IDs declaradas pero no utilizadas',
+        optUseUndeclared: 'Utilizar IDs no declaradas disponibles',
+        optRespectReserved: 'Respetar IDs reservadas',
+        optUpdateRefs: 'Actualizar todas las referencias',
+        optValidate: 'Validar después de reorganizar',
+        onlyChanged: 'Mostrar solo IDs modificadas',
+        thRange: 'Rango',
+        thOld: 'ID actual',
+        thNew: 'ID nueva',
+        thUser: 'Usuario',
+        thStatus: 'Estado',
+        reviewCode: 'Revisar código completo antes y después',
+        current: 'Actual',
+        renumbered: 'Renumerado',
+        availableAria: 'IDs disponibles detectadas',
+        rangesAria: 'Estado por rango'
+    },
+    val: {
+        secMissing: 'Falta la sección {section}.',
+        genSecMissing: 'La configuración generada no contiene la sección {section}.',
+        roleStyleChanged: 'La sección {from} fue cambiada a {to}.',
+        dupManagedSection: 'La configuración contiene secciones Members, Roles/Groups o Permissions duplicadas.',
+        groupNameMissing: 'La sección {section} contiene un grupo sin nombre.',
+        badId: 'El identificador "{id}" del rol {role} no es un ID RemoteAdmin válido.',
+        memberRoleUnknown: 'El usuario {id} referencia el rol inexistente {role}.',
+        dupId: 'El ID {id} aparece {count} veces ({roles}).',
+        dupRoleProp: 'La propiedad {name} aparece {count} veces; se conserva literalmente y el último valor es el efectivo.',
+        dupPerm: 'El permiso {perm} aparece {count} veces; se conserva literalmente mientras no sea editado.',
+        invalidRoleColor: 'El rol {role} utiliza el color no admitido "{color}".',
+        emptyRoleBadge: 'El rol {role} no tiene badge visible.',
+        rolePropsMissing: 'El rol {role} no contiene las propiedades requeridas: {list}.',
+        invalidRoleBool: 'La propiedad {name} debe ser true, false o default; se encontró "{value}".',
+        invalidRolePower: 'La propiedad {name} debe ser default o un entero entre 0 y 255; se encontró "{value}".',
+        permUnknown: 'El permiso {perm} referencia el rol inexistente {role}.',
+        overrideUnknown: 'override_password_role referencia el rol inexistente {role}.',
+        memberRoleUndeclared: 'El usuario {id} quedó asociado a {role}, pero ese rol no aparece en {section}.',
+        memberCount: 'Se esperaban {expected} miembros y se generaron {generated}.',
+        noMember: 'El rol {role} no tiene miembros asignados.',
+        noMembers: 'No se encontraron miembros para exportar.',
+        roleNameMissing: 'Existe un rol sin nombre.',
+        noneValue: 'ninguna',
+        emptyId: '(vacío)',
+        noRole: '(sin rol)',
+        noId: '(sin ID)',
+        emptyRole: '(vacío)',
+        notLoadedFile: 'Primero carga un archivo RemoteAdmin.',
+        exactDup: 'El registro {id} está repetido exactamente {count} veces; no se eliminó automáticamente.',
+        sharedInternal: 'El ID interno {role} está compartido por {count} usuarios; se conservó sin cambios.',
+        dupRoleDecl: 'El rol {role} está declarado {count} veces.',
+        propUndeclared: 'Existen propiedades para {role}, pero el rol no está declarado.',
+        dupRolePropShort: 'La propiedad {name} aparece {count} veces.',
+        dupPermRole: '{perm} repite el rol {role}.',
+        customPrefixes: 'Se conservaron rangos personalizados después de la jerarquía conocida: {list}.'
+    },
+    src: {
+        groupNameMissing: 'La sección Groups de RemoteAdmin contiene un grupo sin nombre.',
+        unknownUserGroup: 'RemoteAdmin asigna usuarios a grupos no declarados en Groups ({list}); la página los conservó y la exportación los declarará.'
+    },
+    orgIssue: {
+        stageMembers: 'Members contiene una línea no reconocida entre usuarios: "{line}".',
+        stageRoles: 'Roles contiene una línea no reconocida entre grupos: "{line}".',
+        stageProps: 'El bloque {role} está intercalado con una línea no reconocida: "{line}".',
+        unknownProps: 'Se conservaron propiedades de rol no reconocidas: {list}.',
+        semanticChange: 'La comparación semántica detectó pérdida o modificación de información.',
+        notIdempotent: 'Una segunda organización produciría un resultado diferente.',
+        rereadFailed: 'El parser no pudo recuperar todas las secciones requeridas.'
+    },
+    renIssue: {
+        unknownPropRef: 'Línea {line}: la propiedad desconocida {name} contiene la ID {role}; no se modificó su valor.',
+        unmanagedRef: 'Línea {line}: se encontró una referencia no reconocida a {role}; debe revisarse manualmente.',
+        semanticChange: 'La transformación no conservó exactamente la identidad o propiedades de los usuarios.',
+        rereadFailed: 'El parser no pudo recuperar las secciones requeridas después de renumerar.',
+        notIdempotent: 'Una segunda renumeración produciría IDs diferentes.',
+        countMismatch: 'La cantidad de usuarios cambió durante la renumeración.',
+        planDupDecl: 'La ID interna {role} está declarada {count} veces; resuelve la ambigüedad antes de renumerar.',
+        skipped: 'Se conservaron IDs sin un sufijo numérico seguro: {list}.',
+        dupNumeric: 'El rango {prefix} utiliza el número {number} mediante varias IDs ({list}).',
+        collision: 'La ID nueva {role} sería utilizada por {list}.',
+        customPrefixes: 'Los rangos personalizados se procesaron independientemente: {list}.',
+        reservedKept: 'Se conservaron IDs marcadas explícitamente como reservadas: {list}.',
+        reusedDeclared: 'Se reutilizaron {count} ID(s) declaradas no utilizadas: {list}.',
+        reusedUndeclared: 'Se aprovecharon {count} ID(s) no declaradas disponibles: {list}.'
+    },
+    perm: {
+        frameworkBad: 'Framework de permisos no compatible: {fw}',
+        title: 'Permisos',
+        closeAria: 'Cerrar permisos',
+        checkAll: 'Marcar Todos',
+        uncheckAll: 'Desmarcar Todos',
+        save: 'Guardar Permisos',
+        noGroups: 'No se encontraron grupos o roles para exportar.',
+        noUsers: 'No se encontraron usuarios en RemoteAdmin.',
+        invalidGroupName: 'El grupo "{name}" no es un identificador YAML compatible.',
+        reservedGroup: 'El grupo "{name}" colisiona con la clave reservada "{key}".',
+        dupGroup: 'El grupo "{name}" está duplicado.',
+        caseCollision: 'Los grupos "{a}" y "{b}" solo difieren en mayúsculas.',
+        unknownUserGroup: 'El usuario "{id}" está asociado al grupo inexistente "{group}".',
+        dupSteam: 'El SteamID {steam} está repetido en el grupo {group}.',
+        conflictSteam: 'El SteamID {steam} está asociado a los grupos {a} y {b}.',
+        noSteam: 'No se encontró ningún SteamID64 válido en RemoteAdmin.',
+        incompatibleIds: '{count} usuario(s) no usan un SteamID64 válido; permanecerán en RemoteAdmin pero no cuentan como SteamID.',
+        noMapping: '{count} permiso(s) nativo(s) de RemoteAdmin no tienen equivalencia automática en {fw}.',
+        wildcard: 'La política seleccionada concede .* (todos los permisos de plugins) a cada grupo, igual que los ejemplos proporcionados.',
+        emptyPerms: '{count} grupo(s) se exportarán sin permisos de plugins hasta que exista un mapeo explícito.',
+        linkedUsers: '{count} usuario(s) se enlazan mediante su grupo de RemoteAdmin; el esquema de {fw} no serializa SteamID en este archivo.',
+        displayFields: 'Badges, colores y notas permanecen en RemoteAdmin porque el archivo de permisos de plugins no dispone de esos campos.',
+        yamlBom: 'El contenido contiene un BOM no permitido.',
+        yamlTabs: 'La configuración contiene tabulaciones.',
+        yamlCrlf: 'La configuración debe utilizar saltos de línea LF.',
+        yamlFinalNewline: 'La configuración LabAPI debe finalizar con un salto de línea LF.',
+        yamlRoot: 'Línea {line}: contenido fuera de un grupo YAML.',
+        yamlDupKey: 'Claves YAML duplicadas: {list}.',
+        yamlMissingDefault: 'Falta el grupo predeterminado "{key}".',
+        yamlInheritance: 'El grupo "{group}" debe contener exactamente un campo "{field}" con la indentación esperada.',
+        yamlDefaultField: 'El grupo "user" de EXILED debe contener exactamente "  default: true".',
+        yamlUnexpectedDefault: 'El grupo "{group}" no puede declararse como grupo predeterminado.',
+        yamlPermsField: 'El grupo "{group}" debe contener exactamente un campo permissions.',
+        yamlEmptyList: 'El grupo "{group}" abre una lista permissions pero no contiene permisos.',
+        yamlOrphanItem: 'El grupo "{group}" contiene permisos fuera de una lista permissions.',
+        yamlItemOrder: 'Los permisos del grupo "{group}" deben aparecer inmediatamente después del encabezado permissions.',
+        yamlGroupField: 'Línea {line}: campo o indentación no compatible dentro del grupo "{group}".'
+    }
+});
+
+Object.assign(STRINGS.en, {
+    _langName: 'English',
+    diag: {
+        title: 'RemoteAdmin Diagnostics',
+        closeAria: 'Close diagnostics',
+        countsAria: 'Diagnostics totals',
+        searchPh: 'Search code, ID, user or message…',
+        searchAria: 'Search diagnostics',
+        show: 'Show',
+        filterAll: 'All',
+        filterError: 'Critical errors',
+        filterWarning: 'Warnings',
+        filterInfo: 'Information',
+        filterSafe: 'Safe repair',
+        filterConfirm: 'Need decision',
+        selectionAria: 'Issue selection',
+        selectVisible: 'Select visible',
+        clearSelection: 'Clear selection',
+        undoRepair: 'Undo last repair',
+        undoAll: 'Undo all changes',
+        restoreOriginal: 'Restore original',
+        resolveSelected: 'Resolve selected',
+        resolveSafe: 'Resolve safe issues',
+        countErrors: 'Critical errors',
+        countWarnings: 'Warnings',
+        countInfo: 'Information',
+        countRepairable: 'Repairable',
+        countDecisions: 'Need decision',
+        summary: '{users} user(s), {roles} internal ID(s), {perms} permission(s). {tail}',
+        summaryOk: 'No critical errors.',
+        summaryBlocked: 'Export remains blocked by critical errors.',
+        emptyFiltered: 'No diagnostics match the filter.',
+        emptyClean: 'RemoteAdmin analyzed successfully. No issues found.',
+        selManual: 'You can select it for the summary; it will require manual editing.',
+        selConfirm: 'Resolving the selection will ask for a decision before modifying it.',
+        selSafe: 'This issue admits a safe automatic repair.',
+        selAria: 'Select {code}',
+        sevError: 'Critical error',
+        sevWarning: 'Warning',
+        sevInfo: 'Information',
+        repairSafe: 'Safe repair',
+        repairConfirm: 'Needs decision',
+        repairManual: 'Manual edit',
+        actResolve: 'Resolve',
+        actReviewDecision: 'Review decision',
+        actReview: 'Review',
+        actGoto: 'Go to issue',
+        actIgnore: 'Ignore',
+        actUnignore: 'Stop ignoring',
+        locLine: ' · line {line}',
+        locRole: ' · ID {role}',
+        locAffects: ' · Affects: {list}',
+        resolveSelectedN: 'Resolve selected ({n})',
+        resolveSafeN: 'Resolve safe issues ({n})',
+        secProps: 'Properties',
+        secGlobal: 'Global configuration',
+        secFormat: 'Format'
+    },
+    nav: {
+        import: 'Import',
+        editor: 'Editor',
+        language: 'Language'
+    },
+    header: {
+        exportRa: 'Export RemoteAdmin',
+        exiled: 'Permissions EXILED',
+        labapi: 'Permissions Lab API'
+    },
+    mode: {
+        ra: '🛡️ Remote Admin Mode',
+        invalidFile: 'The file is not a valid Remote Admin configuration.'
+    },
+    common: {
+        cancel: 'Cancel',
+        close: 'Close',
+        save: 'Save',
+        add: 'Add',
+        delete: 'Delete',
+        edit: 'Edit',
+        warnings: 'Warnings',
+        noWarnings: 'No warnings.',
+        search: 'Search',
+        copy: 'Copy',
+        download: 'Download',
+        confirm: 'Confirm'
+    },
+    importView: {
+        title: 'Import Current Configuration',
+        desc: 'Paste the full contents of your Remote Admin configuration file (config_remoteadmin.txt) here.',
+        configLabel: 'Configuration contents',
+        configPh: '# Paste your configuration here...',
+        parse: 'Read Configuration',
+        upload: 'Upload .txt File',
+        empty: 'Please paste the configuration.'
+    },
+    editor: {
+        title: 'Groups & Members',
+        searchPh: 'Search member...',
+        searchAria: 'Search member',
+        validate: 'Validate RemoteAdmin',
+        repair: 'Repair RemoteAdmin',
+        badgeBulk: 'Bulk badge import',
+        addGroup: 'Add Group',
+        addCategoryTitle: 'Add Category'
+    },
+    health: {
+        pending: 'Not validated',
+        valid: 'Valid RemoteAdmin',
+        warnings: '{count} warning(s)',
+        errors: '{count} error(s)'
+    },
+    action: {
+        copied: 'Copied!',
+        copyFail: 'Could not copy automatically. Select the text and copy it manually.',
+        downloadBlocked: 'The RemoteAdmin file contains blocking errors. Review the preview before downloading.',
+        downloadFail: 'Could not download the file: {error}',
+        downloadFailBrowser: 'the browser refused the download.',
+        permsBlocked: 'The configuration contains blocking errors. Review the preview before downloading.'
+    },
+    healthExtra: {
+        blockDownload: '{count} critical error(s) block downloading until resolved.'
+    },
+    member: {
+        deleteConfirm: 'Delete this member?',
+        invalidId: 'Enter a valid ID: a numeric @steam/@discord ID or a @northwood user.',
+        kickRange: 'Kick power values must be between 0 and 255.',
+        addTitle: 'Add Member',
+        closeAria: 'Close member form',
+        name: 'Name',
+        namePh: 'E.g. YAN',
+        notes: 'Notes / Comments (Optional)',
+        notesPh: 'E.g. before B3, expires June 09...',
+        steamId: 'SteamID (Required)',
+        steamIdPh: 'E.g. 76561198841587908@steam',
+        badge: 'Badge Text',
+        badgePh: 'E.g. SERVER OWNER',
+        color: 'Badge Color',
+        kickPower: 'Kick Power',
+        reqKick: 'Req. Kick Power',
+        cover: 'Cover',
+        hidden: 'Hidden',
+    },
+    group: {
+        newPrompt: 'New group name (e.g. A, B, VIP):',
+        invalidName: 'The group may only contain letters, numbers and underscores, and may not start with a number.',
+        exists: 'Group "{prefix}" already exists.',
+        deleteConfirm: 'Delete group {prefix} and all its members?'
+    },
+    move: {
+        selectTarget: 'Please select a valid target group.',
+        selectGroup: 'Select a group...'
+    },
+    badgeIssue: {
+        malformedLine: 'The line does not contain a key followed by a colon.',
+        unknownKey: 'The key "{key}" is not recognized and will be ignored.',
+        duplicateField: 'The key "{key}" is repeated; its last value will be used.',
+        missingOwner: 'The required "badge de:" value is missing.',
+        emptyOwnerName: 'The "badge de:" value must contain a name besides @.',
+        ownerWithoutAt: 'The owner does not start with @; it will be kept exactly as written.',
+        emptyBadge: 'The _badge field cannot be empty.',
+        missingColor: 'The required _color field is missing.',
+        invalidColor: 'The color "{color}" does not exist in the current selector.',
+        colorSuggestion: ' Did you mean "{suggestion}"?',
+        missingSteam: 'The required _steamID field is missing.',
+        invalidSteam: 'The value must be an individual public 17-digit SteamID64, without @steam.',
+        dupInput: 'SteamID repeated within the text; it matches record {n}.',
+        conflictInput: 'SteamID repeated with different information than record {n}.',
+        dupExisting: 'The SteamID already appears more than once in RemoteAdmin; fix that ambiguity before importing.',
+        existDup: 'The SteamID already exists in role {role} with the same data.',
+        existConflict: 'The SteamID already exists in role {role} with different information.',
+        sharedConflict: 'Role {role} is shared by several users; RemoteAdmin does not support an individual badge or color.',
+        targetRequired: 'Select a group for new SteamIDs.',
+        targetNotFound: 'Target group "{group}" does not exist.',
+        sharedBatch: 'Group {group} is empty and another record proposes a different badge or color; choose a single combination.',
+        sharedTarget: 'Group {group} uses a shared role; badge and color must match the role.',
+        multiMutations: 'There is more than one replace or update action for SteamID {steam}; select only one.',
+        multiShared: 'There are several badge and color combinations selected for shared role {group}; choose only one.',
+        steamChanged: 'SteamID {steam} appeared after the preview and was omitted.',
+        targetUnavailable: 'The target group is no longer available.',
+        sharedStale: 'Group {group} uses a shared role; badge and color no longer match the role.',
+        notUnique: 'Could not uniquely resolve SteamID {steam}.'
+    },
+    badgeBulk: {
+        notAnalyzed: 'Not analyzed.',
+        needRecords: 'Paste at least one record to analyze it.',
+        selectGroup: 'Select a group',
+        statusValid: 'Valid',
+        statusWarning: 'Valid with warnings',
+        statusDuplicate: 'Duplicate',
+        statusConflict: 'Conflict',
+        statusInvalid: 'Invalid',
+        noIssues: 'No errors.',
+        lineIssue: 'Line {line}: {message}',
+        actionFor: 'Action for SteamID {id}',
+        actCancel: 'Cancel record',
+        actOmit: 'Omit',
+        actReplace: 'Replace existing',
+        actUpdate: 'Update changed fields',
+        actImport: 'Use this record',
+        actImportCombo: 'Use this combination',
+        actAdd: 'Add',
+        sumTotal: 'Total',
+        sumValid: 'Valid',
+        sumInvalid: 'Invalid',
+        sumDupes: 'Duplicates/conflicts',
+        sumOmitted: 'Omitted/cancelled',
+        applyHeading: 'There are records pending correction:',
+        applyRecord: 'Record {n}, ',
+        applyLine: '{prefix}line {line}: {message}',
+        applyInvalid: ' {count} invalid record(s) remain in the preview.',
+        changedAfter: 'The RemoteAdmin configuration changed after the preview. Analyze the records again.',
+        multiMutationsAlert: 'There are several mutating actions for the same SteamID. Keep only one before confirming.',
+        multiSharedAlert: 'There are several badge and color combinations selected for the same shared role. Keep only one.',
+        title: 'Bulk badge import',
+        closeAria: 'Close bulk badge import',
+        intro: 'Paste one or more records. Data will be analyzed and previewed before modifying the current configuration.',
+        inputLabel: 'Badge records',
+        inputPh: 'badge de: @Endercruz\n_badge: Endercruz\n_color: orange\n_steamID: 76561199835925257',
+        targetGroup: 'Target group',
+        analyze: 'Analyze and preview',
+        clear: 'Clear',
+        previewAria: 'Bulk badge import preview',
+        caption: 'Records analyzed before confirming the import',
+        thLine: 'Line',
+        thOwner: 'Note or owner',
+        thBadge: 'Badge',
+        thColor: 'Color',
+        thSteam: 'SteamID64',
+        thStatus: 'Status',
+        thIssue: 'Error or warning',
+        thAction: 'Action',
+        confirm: 'Confirm import',
+        finished: 'Load finished: {imported} added, {replaced} replaced, {updated} updated, {omitted} omitted, {cancelled} cancelled and {invalid} invalid.'
+    },
+    memberModal: {
+        addToGroup: 'Add Member to Group {group}',
+        edit: 'Edit Member'
+    },
+    permModal: {
+        groupTitle: 'Permissions of Group {group}',
+        memberTitle: 'Permissions of {name}'
+    },
+    bulkMembers: {
+        added: 'Added {count} members to group {group}.',
+        autoNote: 'Bulk added'
+    },
+    bulk: {
+        title: 'Bulk Member Load',
+        descA: 'Paste your member list. The system will automatically extract the',
+        ids: 'SteamID/DiscordID',
+        and: 'and the',
+        name: 'Name',
+        listLabel: 'Member list',
+        process: 'Process and Add',
+        inputPh: 'E.g.:\n76561198841587908@steam YAN\n123456789012345678@discord User Two',
+        closeAria: 'Close bulk load'
+    },
+    promote: {
+        title: 'Promote',
+        closeAria: 'Close promotion window',
+        targetGroup: 'Target group',
+        desc: 'The member will keep their badge (updating the rank), color, cover and hidden. They will adopt the permissions, Kick Power and Required Kick Power of the target group.',
+        confirm: 'Confirm Promotion'
+    },
+    demote: {
+        title: 'Demote',
+        closeAria: 'Close demotion window',
+        targetGroup: 'Target group',
+        desc: 'The member will keep their badge (updating the rank), color, cover and hidden. They will adopt the permissions, Kick Power and Required Kick Power of the target group.',
+        confirm: 'Confirm Demotion'
+    },
+    cards: {
+        noResults: 'No results found.',
+        groupName: 'Group {prefix}',
+        noMembers: 'No members.',
+        noName: 'No Name',
+        promote: 'Promote',
+        demote: 'Demote',
+        perms: 'Permissions',
+        editBtn: 'Edit',
+        hiddenYes: 'Yes',
+        hiddenNo: 'No',
+        permsCount: 'Permissions',
+        categories: 'Categories',
+        categoryName: 'Category {name}',
+        groupPerms: 'Group Permissions',
+        groupPermsTitle: 'Group Permissions',
+        addMember: 'Add Member',
+        addMemberTitle: 'Add Member',
+        noMembersInCat: 'No members in this category.',
+        promoteTitle: 'Promote rank',
+        promoteAria: 'Promote member rank',
+        demoteTitle: 'Demote rank',
+        demoteAria: 'Demote member rank',
+        permsTitle: 'Permissions',
+        permsAria: 'Member permissions',
+        editAria: 'Edit member',
+        deleteAria: 'Delete member',
+        noPerms: 'Missing permission: {list}',
+        targetOpt: 'Group {prefix} ({label}) - {count} members',
+        bulkTitle: 'Bulk Load - Group {prefix}',
+        sharedRole: ' (shared role)',
+        deleteGroupTitle: 'Delete Group',
+        deleteGroupAria: 'Delete group',
+        deleteAria: 'Delete member',
+        dragTitle: 'Drag to reorder'
+    },
+    repair: {
+        rollbackParser: 'The parser could not recover all required sections.',
+        rollbackData: 'Semantic comparison detected data loss.',
+        rollbackNoChange: 'The repair did not resolve the selected diagnostic.',
+        rolledBack: 'The repair was rolled back: {reason}',
+        noSafeSelection: 'The selection contains no safe automatic repairs.',
+        appliedSafe: 'Applied {count} safe repair(s). The file was analyzed again.',
+        applyFixConfirm: 'Apply the proposed fix for {code}?',
+        cannotApplyFix: 'Could not apply: {reason}',
+        cannotApplyDefault: 'the fix produced no verifiable result.',
+        parserLost: 'The resolution was reverted because the parser could not recover the full file.',
+        manualRequired: 'This issue requires editing the value or choosing a valid relation; no automatic change was applied.',
+        selectOne: 'Select at least one issue before continuing.',
+        unresolvedManual: '{count} selected issue(s) require manual editing and were not modified:\n{list}',
+        unresolvedLine: ' (line {line})',
+        loadFirst: 'First load a RemoteAdmin configuration.',
+        undoBlocked: 'The content changed after the repair; it will not be undone automatically to avoid losing work.',
+        undoAllConfirm: 'Undo all repairs made during this session?',
+        restoreConfirm: 'Restore RemoteAdmin exactly as loaded at the start of this session?'
+    },
+    choice: {
+        keepLine: 'Type the line you want to keep:\n{list}',
+        removeConflicts: '{count} conflicting association(s) will be removed and line {line} will be kept. Continue?',
+        keepValue: 'Type the line whose value you want to keep:\n{list}',
+        keepSingle: 'A single declaration of {name} will be kept. Continue?',
+        combinePrompt: 'Type “combine” to merge the IDs or the line you want to keep:\n{list}',
+        combineDefault: 'combine',
+        combineConfirm: 'The duplicate assignments of {name} will be combined. Continue?',
+        keepOneConfirm: 'Only the declaration on line {line} will be kept. Continue?',
+        keepRole: 'Type the line of {role} you want to keep:\n{list}',
+        removeRoles: '{count} duplicate declarations of {role} will be removed. Continue?'
+    },
+    export: {
+        modalTitle: 'New Generated Configuration',
+        closeAria: 'Close generated configuration',
+        summaryTitle: 'Export summary',
+        framework: 'Target framework:',
+        statsAria: 'Export totals',
+        statUsers: 'Users',
+        statGroups: 'Exported groups',
+        statPerms: 'Unique permissions',
+        raOptionsAria: 'RemoteAdmin export options',
+        filename: 'File name',
+        filenameHelp: 'The imported file name is kept whenever possible.',
+        formatLabel: 'Detected format',
+        formatHelp: 'Text compatible with the loaded configuration.',
+        policy: 'Policy for unmapped permissions',
+        policySafe: 'Safe conversion (recommended)',
+        policyWildcard: 'Wildcard/explicit reference (.*)',
+        policyHelp: 'The safe option only keeps permissions with known equivalence.',
+        policyWildcardHelp: 'Warning: .* grants every permission of every plugin to each group.',
+        policySafeHelp: 'Native RemoteAdmin permissions do not convert into plugin nodes without an explicit mapping.',
+        tabRa: 'Remote Admin',
+        tabExiled: 'Permissions EXILED',
+        tabLabapi: 'Permissions Lab API',
+        titleRa: 'RemoteAdmin Preview',
+        titlePerms: 'Permissions {framework} Preview',
+        formatDetail: 'RemoteAdmin text {ext} · {enc}{bom} · {le} · {final}',
+        withBom: ' with BOM',
+        withoutBom: ' without BOM',
+        finalLine: 'final line present',
+        noFinalLine: 'no final line',
+        issueError: 'Error',
+        issueWarning: 'Warning',
+        needPreview: 'First load a valid RemoteAdmin configuration.',
+        needPreviewValid: 'First generate a valid RemoteAdmin preview.',
+        undoRenumberTitle: 'The content changed after renumbering and can no longer be undone automatically.',
+        diagnostics: 'Diagnostics',
+        organize: 'Organize RemoteAdmin',
+        renumber: 'Renumber IDs',
+        undoRenumber: 'Undo renumbering',
+        cancelOrg: 'Cancel organization',
+        applyOrg: 'Apply organization',
+        applyRenumber: 'Apply renumbering',
+        copyTab: 'Copy Current Tab',
+        downloadTab: 'Download Current Tab',
+        analyzing: 'Analyzing…',
+        copyFail: 'Could not copy automatically. Select the text and copy it manually.'
+    },
+    issue: {
+        blocking: 'Blocked',
+        existing: 'Existing error',
+        warning: 'Warning',
+        error: 'Error'
+    },
+    org: {
+        statusOk: 'The file already uses the expected hierarchical order.',
+        statusSafe: 'Organization is safe and can be applied. Existing errors will keep blocking the download.',
+        statusDone: 'Organization finished. Re-read and semantic comparison were correct.',
+        statusBlocked: 'The result was generated, but it contains conflicts that must be resolved first.',
+        mUsers: 'users',
+        mGroups: 'groups',
+        mMembers: 'members moved',
+        mBlocks: 'blocks moved',
+        mLists: 'sorted lists',
+        mBlanks: 'blank lines removed',
+        mWarnings: 'warnings',
+        mFileErrors: 'file errors',
+        mBlocking: 'organization blockers',
+        noIssues: 'No conflicts. Comments, unknown properties and semantic data preserved.',
+        fail: 'Could not organize RemoteAdmin: {error}',
+        failStructural: 'structural analysis failed.',
+        cannotApply: 'The organization cannot be applied because there are no changes or the transformation has its own blocker.',
+        appliedNotice: 'The organization was applied to the central state and can be undone from Diagnostics.',
+        historyLabel: 'Structural RemoteAdmin organization',
+        compareTitle: 'Organization comparison',
+        original: 'Original',
+        organized: 'Organized'
+    },
+    ren: {
+        rowReserved: 'Reserved',
+        rowReusedDeclared: 'Reused (declared unused)',
+        rowReusedUndeclared: 'Assigned (available gap)',
+        rowChanged: 'Will be renumbered',
+        rowUnchanged: 'No changes',
+        rowsEmpty: 'No modified IDs with the current filter.',
+        statusDone: 'All numbered IDs are already consecutive from 1.',
+        statusSafe: 'Renumbering is safe ({changed} changes, {reused} reused). Existing errors will keep blocking the download.',
+        statusReady: 'Map computed: {changed} changes, {reused} reused IDs. No identity or configuration was altered.',
+        statusBlocked: 'Renumbering was computed, but conflicts block its application.',
+        mIds: 'IDs analyzed',
+        mChanged: 'modified',
+        mUnchanged: 'unchanged',
+        mReused: 'reused',
+        mReserved: 'reserved',
+        mRanges: 'ranges',
+        mFileErrors: 'file errors',
+        mBlocking: 'blockers',
+        availTitle: 'Detected available IDs:',
+        availDeclared: 'declared',
+        availReserved: 'reserved',
+        availFree: 'available',
+        availMore: '+{count} more',
+        reusedTitle: 'IDs that will be reused:',
+        reusedDeclared: 'declared unused',
+        reusedFree: 'available undeclared',
+        rangeChanged: '{prefix}: {changed} change(s){reuse}',
+        rangeReuse: ' ({reused} reused)',
+        rangeClean: '{prefix}: no changes',
+        noIssues: 'SteamIDs, badges, colors, permissions, notes and unknown properties were preserved.',
+        needPreview: 'First generate a RemoteAdmin preview.',
+        analyzing: 'Analyzing…',
+        fail: 'Could not renumber IDs: {error}',
+        failStructural: 'structural analysis failed.',
+        cannotApply: 'The renumbering cannot be applied because there are no changes or the transformation has its own blocker.',
+        appliedNotice: 'Renumbering applied: {changed} ID(s) modified in {ranges} range(s).',
+        appliedHistory: 'Renumbering of {changed} internal ID(s)',
+        appliedRemaining: '\n\nWarning: {count} file error(s) remain; downloading stays blocked.',
+        appliedOk: 'Renumbering completed successfully.\n\nRanges processed: {ranges}\nModified IDs: {changed}\nUnchanged IDs: {unchanged}\n\n✓ SteamIDs preserved\n✓ Badges and colors preserved\n✓ Permissions updated\n✓ Re-read correct{remaining}',
+        cannotUndo: 'Cannot undo because RemoteAdmin changed after renumbering.',
+        undoConfirm: 'The previous numbering of this session will be restored. Continue?',
+        undone: 'ID renumbering was undone successfully.',
+        previewTitle: 'ID Preview',
+        optReuseDeclared: 'Reuse declared but unused IDs',
+        optUseUndeclared: 'Use available undeclared IDs',
+        optRespectReserved: 'Respect reserved IDs',
+        optUpdateRefs: 'Update all references',
+        optValidate: 'Validate after reorganizing',
+        onlyChanged: 'Show only modified IDs',
+        thRange: 'Range',
+        thOld: 'Current ID',
+        thNew: 'New ID',
+        thUser: 'User',
+        thStatus: 'Status',
+        reviewCode: 'Review full code before and after',
+        current: 'Current',
+        renumbered: 'Renumbered',
+        availableAria: 'Detected available IDs',
+        rangesAria: 'Range status'
+    },
+    val: {
+        secMissing: 'Missing section {section}.',
+        genSecMissing: 'The generated configuration does not contain section {section}.',
+        roleStyleChanged: 'Section {from} was changed to {to}.',
+        dupManagedSection: 'The configuration contains duplicated Members, Roles/Groups or Permissions sections.',
+        groupNameMissing: 'Section {section} contains an unnamed group.',
+        badId: 'Identifier "{id}" of role {role} is not a valid RemoteAdmin ID.',
+        memberRoleUnknown: 'User {id} references nonexistent role {role}.',
+        dupId: 'ID {id} appears {count} times ({roles}).',
+        dupRoleProp: 'Property {name} appears {count} times; it is kept literally and the last value is effective.',
+        dupPerm: 'Permission {perm} appears {count} times; it is kept literally while unedited.',
+        invalidRoleColor: 'Role {role} uses unsupported color "{color}".',
+        emptyRoleBadge: 'Role {role} has no visible badge.',
+        rolePropsMissing: 'Role {role} is missing required properties: {list}.',
+        invalidRoleBool: 'Property {name} must be true, false or default; found "{value}".',
+        invalidRolePower: 'Property {name} must be default or an integer between 0 and 255; found "{value}".',
+        permUnknown: 'Permission {perm} references nonexistent role {role}.',
+        overrideUnknown: 'override_password_role references nonexistent role {role}.',
+        memberRoleUndeclared: 'User {id} was left associated to {role}, but that role is not listed in {section}.',
+        memberCount: 'Expected {expected} members but generated {generated}.',
+        noMember: 'Role {role} has no assigned members.',
+        noMembers: 'No members found to export.',
+        roleNameMissing: 'There is an unnamed role.',
+        noneValue: 'none',
+        emptyId: '(empty)',
+        noRole: '(no role)',
+        noId: '(no ID)',
+        emptyRole: '(empty)',
+        notLoadedFile: 'First load a RemoteAdmin file.',
+        exactDup: 'Record {id} is exactly repeated {count} times; it was not automatically removed.',
+        sharedInternal: 'Internal ID {role} is shared by {count} users; it was kept unchanged.',
+        dupRoleDecl: 'Role {role} is declared {count} times.',
+        propUndeclared: 'Properties exist for {role}, but the role is not declared.',
+        dupRolePropShort: 'Property {name} appears {count} times.',
+        dupPermRole: '{perm} repeats role {role}.',
+        customPrefixes: 'Custom ranges were kept after the known hierarchy: {list}.'
+    },
+    src: {
+        groupNameMissing: 'The RemoteAdmin Groups section contains an unnamed group.',
+        unknownUserGroup: 'RemoteAdmin assigns users to groups undeclared in Groups ({list}); the page kept them and the export will declare them.'
+    },
+    orgIssue: {
+        stageMembers: 'Members contains an unrecognized line among users: "{line}".',
+        stageRoles: 'Roles contains an unrecognized line among groups: "{line}".',
+        stageProps: 'Block {role} is interleaved with an unrecognized line: "{line}".',
+        unknownProps: 'Unrecognized role properties were kept: {list}.',
+        semanticChange: 'Semantic comparison detected lost or modified information.',
+        notIdempotent: 'A second organization would produce a different result.',
+        rereadFailed: 'The parser could not recover all required sections.'
+    },
+    renIssue: {
+        unknownPropRef: 'Line {line}: unknown property {name} contains ID {role}; its value was not modified.',
+        unmanagedRef: 'Line {line}: found an unrecognized reference to {role}; it must be reviewed manually.',
+        semanticChange: 'The transformation did not exactly preserve user identity or properties.',
+        rereadFailed: 'The parser could not recover the required sections after renumbering.',
+        notIdempotent: 'A second renumbering would produce different IDs.',
+        countMismatch: 'The user count changed during renumbering.',
+        planDupDecl: 'Internal ID {role} is declared {count} times; resolve the ambiguity before renumbering.',
+        skipped: 'IDs without a safe numeric suffix were kept: {list}.',
+        dupNumeric: 'Range {prefix} uses number {number} through several IDs ({list}).',
+        collision: 'New ID {role} would be used by {list}.',
+        customPrefixes: 'Custom ranges were processed independently: {list}.',
+        reservedKept: 'IDs explicitly marked as reserved were kept: {list}.',
+        reusedDeclared: 'Reused {count} declared unused ID(s): {list}.',
+        reusedUndeclared: 'Leveraged {count} available undeclared ID(s): {list}.'
+    },
+    perm: {
+        frameworkBad: 'Unsupported permissions framework: {fw}',
+        title: 'Permissions',
+        closeAria: 'Close permissions',
+        checkAll: 'Check All',
+        uncheckAll: 'Uncheck All',
+        save: 'Save Permissions',
+        noGroups: 'No groups or roles found to export.',
+        noUsers: 'No users found in RemoteAdmin.',
+        invalidGroupName: 'Group "{name}" is not a YAML-compatible identifier.',
+        reservedGroup: 'Group "{name}" collides with reserved key "{key}".',
+        dupGroup: 'Group "{name}" is duplicated.',
+        caseCollision: 'Groups "{a}" and "{b}" differ only in case.',
+        unknownUserGroup: 'User "{id}" is associated to nonexistent group "{group}".',
+        dupSteam: 'SteamID {steam} is repeated in group {group}.',
+        conflictSteam: 'SteamID {steam} is associated to groups {a} and {b}.',
+        noSteam: 'No valid SteamID64 found in RemoteAdmin.',
+        incompatibleIds: '{count} user(s) do not use a valid SteamID64; they will remain in RemoteAdmin but do not count as SteamID.',
+        noMapping: '{count} native RemoteAdmin permission(s) have no automatic equivalence in {fw}.',
+        wildcard: 'The selected policy grants .* (every plugin permission) to each group, just like the provided examples.',
+        emptyPerms: '{count} group(s) will be exported without plugin permissions until an explicit mapping exists.',
+        linkedUsers: '{count} user(s) are linked through their RemoteAdmin group; the {fw} schema does not serialize SteamID in this file.',
+        displayFields: 'Badges, colors and notes remain in RemoteAdmin because the plugin permissions file has no such fields.',
+        yamlBom: 'Content contains a disallowed BOM.',
+        yamlTabs: 'Configuration contains tabs.',
+        yamlCrlf: 'Configuration must use LF line endings.',
+        yamlFinalNewline: 'LabAPI configuration must end with an LF newline.',
+        yamlRoot: 'Line {line}: content outside a YAML group.',
+        yamlDupKey: 'Duplicate YAML keys: {list}.',
+        yamlMissingDefault: 'Missing default group "{key}".',
+        yamlInheritance: 'Group "{group}" must contain exactly one "{field}" field with the expected indentation.',
+        yamlDefaultField: 'EXILED "user" group must contain exactly "  default: true".',
+        yamlUnexpectedDefault: 'Group "{group}" cannot be declared as the default group.',
+        yamlPermsField: 'Group "{group}" must contain exactly one permissions field.',
+        yamlEmptyList: 'Group "{group}" opens a permissions list but contains no permissions.',
+        yamlOrphanItem: 'Group "{group}" contains permissions outside a permissions list.',
+        yamlItemOrder: 'Permissions of group "{group}" must appear immediately after the permissions header.',
+        yamlGroupField: 'Line {line}: incompatible field or indentation inside group "{group}".'
+    }
+});
 
 function createEmptyParsedData() {
     return {
@@ -659,7 +1962,7 @@ function clearLoadedConfiguration() {
 
     btnEditorView.disabled = true;
     btnGenerate.disabled = true;
-    btnGenerate.innerHTML = '<i class="ph ph-download-simple" aria-hidden="true"></i> Exportar RemoteAdmin';
+    btnGenerate.innerHTML = `<i class="ph ph-download-simple" aria-hidden="true"></i> <span>${t('header.exportRa')}</span>`;
     if (btnExportExiled) btnExportExiled.disabled = true;
     if (btnExportLabAPI) btnExportLabAPI.disabled = true;
     switchView('import');
@@ -669,7 +1972,7 @@ function parseEditorText(sourceText) {
     const text = String(sourceText ?? '');
     if (!text.trim()) {
         clearLoadedConfiguration();
-        alert("Por favor, pega la configuración.");
+        alert(t('importView.empty'));
         return false;
     }
     activeRemoteAdminIdRenumber = null;
@@ -685,7 +1988,7 @@ function parseEditorText(sourceText) {
         remoteAdminRepairHistory = [];
         ignoredRemoteAdminDiagnosticIds.clear();
         selectedRemoteAdminDiagnosticIds.clear();
-        if (modeBadge) { modeBadge.style.display = 'inline-block'; modeBadge.textContent = '🛡️ Modo: Remote Admin'; }
+        if (modeBadge) { modeBadge.style.display = 'inline-block'; modeBadge.textContent = t('mode.ra'); }
         parseConfig(text);
         updateOldRoles();
         renderRAEditor();
@@ -693,13 +1996,13 @@ function parseEditorText(sourceText) {
         switchView('editor');
     } else {
         clearLoadedConfiguration();
-        alert("El archivo no es una configuración válida de Remote Admin.");
+        alert(t('mode.invalidFile'));
         return false;
     }
     
     btnEditorView.disabled = false;
     btnGenerate.disabled = false;
-    btnGenerate.innerHTML = '<i class="ph ph-download-simple" aria-hidden="true"></i> Exportar RemoteAdmin';
+    btnGenerate.innerHTML = `<i class="ph ph-download-simple" aria-hidden="true"></i> <span>${t('header.exportRa')}</span>`;
     if (btnExportExiled) btnExportExiled.disabled = false;
     if (btnExportLabAPI) btnExportLabAPI.disabled = false;
     return true;
@@ -1104,7 +2407,7 @@ function parseConfig(text) {
             parsedData.sourceValidationIssues.push({
                 code: 'GROUP_NAME_MISSING',
                 severity: 'error',
-                message: 'La sección Groups de RemoteAdmin contiene un grupo sin nombre.'
+                message: t('src.groupNameMissing')
             });
             nestedRole = null;
             return;
@@ -1136,7 +2439,7 @@ function parseConfig(text) {
         parsedData.sourceValidationIssues.push({
             code: 'AUTO_REPAIRED_UNKNOWN_USER_GROUP',
             severity: 'warning',
-            message: `RemoteAdmin asigna usuarios a grupos no declarados en Groups (${undeclaredMemberRoles.join(', ')}); la página los conservó y la exportación los declarará.`
+            message: t('src.unknownUserGroup', { list: undeclaredMemberRoles.join(', ') })
         });
     }
 
@@ -1223,7 +2526,7 @@ function renderRAEditor() {
     }
     
     if (container.innerHTML === '') {
-        container.innerHTML = `<div class="empty-state"><i class="ph ph-users"></i><p>No se encontraron resultados.</p></div>`;
+        container.innerHTML = `<div class="empty-state"><i class="ph ph-users"></i><p>${t('cards.noResults')}</p></div>`;
     }
     scheduleRemoteAdminDiagnosticsRefresh();
 }
@@ -1253,11 +2556,11 @@ function renderAccordionView(container, groupKeys, searchQuery) {
         const header = document.createElement('div');
         header.className = 'accordion-header-row';
         header.innerHTML = `
-            <h3 class="accordion-title">Grupo ${escapeHtml(prefix)} <span class="group-count" style="background: var(--secondary-color); color: var(--text-main); font-size: 0.75rem; padding: 2px 8px; border-radius: 12px;">${group.members.length}</span></h3>
+            <h3 class="accordion-title">${t('cards.groupName', { prefix: escapeHtml(prefix) })}${groupLabelSuffix(prefix)} <span class="group-count" style="background: var(--secondary-color); color: var(--text-main); font-size: 0.75rem; padding: 2px 8px; border-radius: 12px;">${group.members.length}</span></h3>
             <div class="accordion-actions">
-                <button type="button" class="btn-icon btn-permissions" title="Permisos del Grupo" aria-label="Permisos del grupo"><i class="ph ph-key" aria-hidden="true"></i></button>
-                <button type="button" class="btn-icon btn-add" title="Añadir Miembro" aria-label="Añadir miembro"><i class="ph ph-user-plus" aria-hidden="true"></i></button>
-                <button type="button" class="btn-icon btn-delete-group" title="Eliminar Grupo" aria-label="Eliminar grupo"><i class="ph ph-trash" aria-hidden="true"></i></button>
+                <button type="button" class="btn-icon btn-permissions" title="${t('cards.groupPermsTitle')}" aria-label="${t('cards.groupPerms')}"><i class="ph ph-key" aria-hidden="true"></i></button>
+                <button type="button" class="btn-icon btn-add" title="${t('cards.addMemberTitle')}" aria-label="${t('cards.addMember')}"><i class="ph ph-user-plus" aria-hidden="true"></i></button>
+                <button type="button" class="btn-icon btn-delete-group" title="${t('cards.deleteGroupTitle')}" aria-label="${t('cards.deleteGroupAria')}"><i class="ph ph-trash" aria-hidden="true"></i></button>
             </div>
         `;
         const headerToggle = header.querySelector('.accordion-title');
@@ -1270,7 +2573,7 @@ function renderAccordionView(container, groupKeys, searchQuery) {
         body.className = 'accordion-body';
         
         if (visibleMembers.length === 0) {
-            body.innerHTML = `<p style="color: var(--text-muted); text-align: center; margin: 0;">No hay miembros.</p>`;
+            body.innerHTML = `<p style="color: var(--text-muted); text-align: center; margin: 0;">${t('cards.noMembers')}</p>`;
         } else {
             visibleMembers.forEach(({ member, originalIndex, roleStr }) => {
                 
@@ -1281,9 +2584,9 @@ function renderAccordionView(container, groupKeys, searchQuery) {
                 mHeader.className = 'member-list-header';
                 mHeader.innerHTML = `
                     <div style="display:flex; align-items: center; gap: 8px;">
-                        <i class="ph ph-dots-six-vertical drag-handle" style="cursor: grab; color: var(--text-muted); font-size: 1.2rem; padding: 4px;" title="Arrastrar para reordenar"></i>
+                        <i class="ph ph-dots-six-vertical drag-handle" style="cursor: grab; color: var(--text-muted); font-size: 1.2rem; padding: 4px;" title="${t('cards.dragTitle')}"></i>
                          <span style="font-weight: 600;">${escapeHtml(roleStr)}</span>
-                         <span>${escapeHtml(member.name || 'Sin Nombre')}</span>
+                         <span>${escapeHtml(member.name || t('cards.noName'))}</span>
                          <span style="color: var(--text-muted); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; max-width: 150px; white-space: nowrap;">${escapeHtml(member.id)}</span>
                     </div>
                     <i class="ph ph-caret-down"></i>
@@ -1301,18 +2604,18 @@ function renderAccordionView(container, groupKeys, searchQuery) {
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
                         <div class="member-badge-preview c-${safeCssToken(member.color)}" style="font-size: 0.8rem; padding: 4px 8px;">${escapeHtml(member.badge)}</div>
                         <div style="display: flex; gap: 8px;">
-                            <button type="button" class="btn btn-secondary btn-promote-member" style="font-size: 0.8rem; padding: 6px 10px;"><i class="ph ph-arrow-fat-line-up" aria-hidden="true"></i> Ascender</button>
-                            <button type="button" class="btn btn-secondary btn-demote-member" style="font-size: 0.8rem; padding: 6px 10px;"><i class="ph ph-arrow-fat-line-down" aria-hidden="true"></i> Descender</button>
-                            <button type="button" class="btn btn-secondary btn-member-perms" style="font-size: 0.8rem; padding: 6px 10px;"><i class="ph ph-key" aria-hidden="true"></i> Permisos</button>
-                            <button type="button" class="btn btn-secondary btn-edit-member"><i class="ph ph-pencil-simple" aria-hidden="true"></i> Editar</button>
-                            <button type="button" class="btn btn-danger btn-delete-member" aria-label="Eliminar miembro" style="background: rgba(191,97,106,0.2); color: var(--danger-color); border:none; padding:8px; border-radius:4px;"><i class="ph ph-trash" aria-hidden="true"></i></button>
+                            <button type="button" class="btn btn-secondary btn-promote-member" style="font-size: 0.8rem; padding: 6px 10px;"><i class="ph ph-arrow-fat-line-up" aria-hidden="true"></i> ${t('cards.promote')}</button>
+                            <button type="button" class="btn btn-secondary btn-demote-member" style="font-size: 0.8rem; padding: 6px 10px;"><i class="ph ph-arrow-fat-line-down" aria-hidden="true"></i> ${t('cards.demote')}</button>
+                            <button type="button" class="btn btn-secondary btn-member-perms" style="font-size: 0.8rem; padding: 6px 10px;"><i class="ph ph-key" aria-hidden="true"></i> ${t('cards.perms')}</button>
+                            <button type="button" class="btn btn-secondary btn-edit-member"><i class="ph ph-pencil-simple" aria-hidden="true"></i> ${t('cards.editBtn')}</button>
+                            <button type="button" class="btn btn-danger btn-delete-member" aria-label="${t('cards.deleteAria')}" style="background: rgba(191,97,106,0.2); color: var(--danger-color); border:none; padding:8px; border-radius:4px;"><i class="ph ph-trash" aria-hidden="true"></i></button>
                         </div>
                     </div>
                     <div style="display:flex; gap: 16px; font-size: 0.85rem; color: var(--text-muted); flex-wrap: wrap;">
                         <span><i class="ph ph-boot"></i> KP: ${member.kickPower}</span>
                         <span><i class="ph ph-shield"></i> RKP: ${member.reqKickPower}</span>
-                        <span><i class="ph ph-eye-slash"></i> Hidden: ${member.hidden ? 'Sí' : 'No'}</span>
-                        <span><i class="ph ph-key"></i> Permisos: ${member.permissions ? member.permissions.size : 0}</span>
+                        <span><i class="ph ph-eye-slash"></i> Hidden: ${member.hidden ? t('cards.hiddenYes') : t('cards.hiddenNo')}</span>
+                        <span><i class="ph ph-key"></i> ${t('cards.permsCount')}: ${member.permissions ? member.permissions.size : 0}</span>
                     </div>
                 `;
                 
@@ -1345,7 +2648,7 @@ function renderAccordionView(container, groupKeys, searchQuery) {
                 });
                 
                 mBody.querySelector('.btn-delete-member').addEventListener('click', () => {
-                    if (confirm("¿Eliminar a este miembro?")) {
+                    if (confirm(t('member.deleteConfirm'))) {
                         group.members.splice(originalIndex, 1);
                         recomputeGroupPermissions(group);
                         updateOldRoles();
@@ -1399,9 +2702,9 @@ function renderAccordionView(container, groupKeys, searchQuery) {
         header.querySelector('.btn-add').addEventListener('click', () => {
             currentSelectedGroup = prefix;
             editingIndex = -1;
-            document.getElementById('member-modal-title').textContent = `Añadir Miembro al Grupo ${prefix}`;
+            document.getElementById('member-modal-title').textContent = t('memberModal.addToGroup', { group: prefix });
             memberForm.reset();
-            document.getElementById('member-badge').value = getRoleLabel(prefix);
+            document.getElementById('member-badge').value = getGroupBadgeLabel(prefix);
             document.getElementById('member-color').value = 'default';
             document.getElementById('member-kick-power').value = 1;
             document.getElementById('member-req-kick').value = 1;
@@ -1411,7 +2714,7 @@ function renderAccordionView(container, groupKeys, searchQuery) {
         });
         
         header.querySelector('.btn-delete-group').addEventListener('click', () => {
-            if (confirm(`¿Eliminar el Grupo ${prefix} y a todos sus miembros?`)) {
+            if (confirm(t('group.deleteConfirm', { prefix }))) {
                 delete parsedData.groups[prefix];
                 if (currentDesktopGroup === prefix) currentDesktopGroup = null;
                 updateOldRoles();
@@ -1435,7 +2738,7 @@ function renderSplitView(container, groupKeys, searchQuery) {
     
     const sidebarTitle = document.createElement('h3');
     sidebarTitle.className = 'sidebar-title';
-    sidebarTitle.textContent = 'Categorías';
+    sidebarTitle.textContent = t('cards.categories');
     sidebar.appendChild(sidebarTitle);
     
     const sidebarList = document.createElement('div');
@@ -1451,7 +2754,7 @@ function renderSplitView(container, groupKeys, searchQuery) {
         // Search highlighting for sidebar: if a group has matching members, show it somehow, 
         // but it's better to just render everything and let the main area filter.
         tab.innerHTML = `
-            <span class="tab-name">Grupo ${escapeHtml(prefix)}</span>
+            <span class="tab-name">${t('cards.groupName', { prefix: escapeHtml(prefix) })}${groupLabelSuffix(prefix)}</span>
             <span class="sidebar-badge">${group.members.length}</span>
         `;
         tab.addEventListener('click', () => {
@@ -1473,10 +2776,10 @@ function renderSplitView(container, groupKeys, searchQuery) {
         const mainHeader = document.createElement('div');
         mainHeader.className = 'split-main-header';
         mainHeader.innerHTML = `
-            <h2>Categoría ${escapeHtml(currentDesktopGroup)}</h2>
+            <h2>${t('cards.categoryName', { name: escapeHtml(currentDesktopGroup) })}${groupLabelSuffix(currentDesktopGroup)}</h2>
             <div class="split-main-actions">
-                <button type="button" class="btn btn-secondary btn-permissions" title="Permisos del Grupo"><i class="ph ph-key" aria-hidden="true"></i> Permisos del Grupo</button>
-                <button type="button" class="btn btn-primary btn-add"><i class="ph ph-plus" aria-hidden="true"></i> Añadir Miembro</button>
+                <button type="button" class="btn btn-secondary btn-permissions" title="${t('cards.groupPermsTitle')}"><i class="ph ph-key" aria-hidden="true"></i> ${t('cards.groupPerms')}</button>
+                <button type="button" class="btn btn-primary btn-add"><i class="ph ph-plus" aria-hidden="true"></i> ${t('cards.addMember')}</button>
             </div>
         `;
         
@@ -1488,9 +2791,9 @@ function renderSplitView(container, groupKeys, searchQuery) {
         mainHeader.querySelector('.btn-add').addEventListener('click', () => {
             currentSelectedGroup = currentDesktopGroup;
             editingIndex = -1;
-            document.getElementById('member-modal-title').textContent = `Añadir Miembro al Grupo ${currentDesktopGroup}`;
+            document.getElementById('member-modal-title').textContent = t('memberModal.addToGroup', { group: currentDesktopGroup });
             memberForm.reset();
-            document.getElementById('member-badge').value = getRoleLabel(currentDesktopGroup);
+            document.getElementById('member-badge').value = getGroupBadgeLabel(currentDesktopGroup);
             document.getElementById('member-color').value = 'default';
             document.getElementById('member-kick-power').value = 1;
             document.getElementById('member-req-kick').value = 1;
@@ -1508,7 +2811,7 @@ function renderSplitView(container, groupKeys, searchQuery) {
         const visibleMembers = getVisibleMemberEntries(group, currentDesktopGroup, searchQuery);
         
         if (visibleMembers.length === 0) {
-            grid.innerHTML = `<p style="color: var(--text-muted); grid-column: 1 / -1; padding: 24px; text-align: center; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">No hay miembros en esta categoría.</p>`;
+            grid.innerHTML = `<p style="color: var(--text-muted); grid-column: 1 / -1; padding: 24px; text-align: center; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">${t('cards.noMembersInCat')}</p>`;
         } else {
             visibleMembers.forEach(({ member, originalIndex, roleStr }) => {
                 const card = document.createElement('div');
@@ -1516,19 +2819,19 @@ function renderSplitView(container, groupKeys, searchQuery) {
                 card.innerHTML = `
                     <div class="card-header">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <i class="ph ph-dots-six-vertical drag-handle" style="cursor: grab; color: var(--text-muted); padding:4px;" title="Arrastrar"></i>
+                            <i class="ph ph-dots-six-vertical drag-handle" style="cursor: grab; color: var(--text-muted); padding:4px;" title="${t('cards.dragTitle')}"></i>
                             <div class="grid-card-badge">${escapeHtml(roleStr)}</div>
                         </div>
                         <div class="card-actions">
-                            <button type="button" class="btn-icon btn-promote-member" title="Ascender rango" aria-label="Ascender rango del miembro"><i class="ph ph-arrow-fat-line-up" aria-hidden="true"></i></button>
-                            <button type="button" class="btn-icon btn-demote-member" title="Descender rango" aria-label="Descender rango del miembro"><i class="ph ph-arrow-fat-line-down" aria-hidden="true"></i></button>
-                            <button type="button" class="btn-icon btn-member-perms" title="Permisos" aria-label="Permisos del miembro"><i class="ph ph-key" aria-hidden="true"></i></button>
-                            <button type="button" class="btn-icon btn-edit-member" aria-label="Editar miembro"><i class="ph ph-pencil-simple" aria-hidden="true"></i></button>
-                            <button type="button" class="btn-icon btn-delete-member" aria-label="Eliminar miembro"><i class="ph ph-trash" aria-hidden="true"></i></button>
+                            <button type="button" class="btn-icon btn-promote-member" title="${t('cards.promoteTitle')}" aria-label="${t('cards.promoteAria')}"><i class="ph ph-arrow-fat-line-up" aria-hidden="true"></i></button>
+                            <button type="button" class="btn-icon btn-demote-member" title="${t('cards.demoteTitle')}" aria-label="${t('cards.demoteAria')}"><i class="ph ph-arrow-fat-line-down" aria-hidden="true"></i></button>
+                            <button type="button" class="btn-icon btn-member-perms" title="${t('cards.permsTitle')}" aria-label="${t('cards.permsAria')}"><i class="ph ph-key" aria-hidden="true"></i></button>
+                            <button type="button" class="btn-icon btn-edit-member" aria-label="${t('cards.editAria')}"><i class="ph ph-pencil-simple" aria-hidden="true"></i></button>
+                            <button type="button" class="btn-icon btn-delete-member" aria-label="${t('cards.deleteAria')}"><i class="ph ph-trash" aria-hidden="true"></i></button>
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="member-name">${escapeHtml(member.name || 'Sin Nombre')}</div>
+                        <div class="member-name">${escapeHtml(member.name || t('cards.noName'))}</div>
                         ${member.notes ? `<div class="member-notes">${escapeHtml(member.notes)}</div>` : ''}
                         <div class="member-id">${escapeHtml(member.id)}</div>
                         <div class="member-badge-preview c-${safeCssToken(member.color)}">${escapeHtml(member.badge)}</div>
@@ -1551,7 +2854,7 @@ function renderSplitView(container, groupKeys, searchQuery) {
                     editMember(originalIndex);
                 });
                 card.querySelector('.btn-delete-member').addEventListener('click', () => {
-                    if (confirm("¿Eliminar a este miembro?")) {
+                    if (confirm(t('member.deleteConfirm'))) {
                         group.members.splice(originalIndex, 1);
                         recomputeGroupPermissions(group);
                         updateOldRoles();
@@ -1602,7 +2905,7 @@ function editMember(index) {
     editingIndex = index;
     const member = parsedData.groups[currentSelectedGroup].members[index];
     
-    document.getElementById('member-modal-title').textContent = 'Editar Miembro';
+    document.getElementById('member-modal-title').textContent = t('memberModal.edit');
     document.getElementById('member-name').value = member.name || '';
     document.getElementById('member-notes').value = member.notes || '';
     document.getElementById('member-steamid').value = member.id;
@@ -1630,14 +2933,14 @@ memberForm.addEventListener('submit', (e) => {
     
     const id = document.getElementById('member-steamid').value.trim();
     if (!validateRemoteAdminUserId(id).valid) {
-        alert("Introduce un ID válido: un ID numérico @steam/@discord o un usuario @northwood.");
+        alert(t('member.invalidId'));
         return;
     }
 
     const kickPower = Number.parseInt(document.getElementById('member-kick-power').value, 10);
     const reqKickPower = Number.parseInt(document.getElementById('member-req-kick').value, 10);
     if (![kickPower, reqKickPower].every(value => Number.isInteger(value) && value >= 0 && value <= 255)) {
-        alert('Los valores de kick power deben estar entre 0 y 255.');
+        alert(t('member.kickRange'));
         return;
     }
     
@@ -1695,15 +2998,15 @@ btnCloseMemberModal.addEventListener('click', () => hideModal(memberModal));
 const btnAddCategory = document.getElementById('btn-add-category');
 if (btnAddCategory) {
     btnAddCategory.addEventListener('click', () => {
-        const name = prompt("Nombre del nuevo grupo (ej. A, B, VIP):");
+        const name = prompt(t('group.newPrompt'));
         if (!name || !name.trim()) return;
         const prefix = name.trim();
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(prefix)) {
-            alert('El grupo solo puede contener letras, números y guiones bajos, y no puede comenzar con un número.');
+            alert(t('group.invalidName'));
             return;
         }
         if (parsedData.groups[prefix]) {
-            alert(`El grupo "${prefix}" ya existe.`);
+            alert(t('group.exists', { prefix }));
             return;
         }
         parsedData.groups[prefix] = { prefix: prefix, members: [], permissions: new Set(), isNumbered: true };
@@ -1718,7 +3021,7 @@ let permissionsContext = { prefix: null, memberIndex: null };
 function openPermissionsModal(prefix) {
     permissionsContext = { prefix, memberIndex: null };
     
-    document.getElementById('permissions-modal-title').textContent = `Permisos del Grupo ${prefix}`;
+    document.getElementById('permissions-modal-title').textContent = t('permModal.groupTitle', { group: prefix });
     permissionsGrid.innerHTML = '';
     
     const group = parsedData.groups[prefix];
@@ -1793,7 +3096,7 @@ function openPermissionsModal(prefix) {
         if (someHave) {
             const subtitle = document.createElement('div');
             subtitle.style.cssText = 'font-size: 0.75rem; color: #ebcb8b; margin-left: 52px; margin-top: 2px;';
-            subtitle.textContent = `Sin permiso: ${membersWithoutPerm.join(', ')}`;
+            subtitle.textContent = t('cards.noPerms', { list: membersWithoutPerm.join(', ') });
             itemDiv.appendChild(subtitle);
         }
         
@@ -1818,7 +3121,7 @@ function openMemberPermissionsModal(prefix, memberIndex) {
 
     ensureMemberPermissions(member, parsedData.groups[prefix].permissions);
     
-    document.getElementById('permissions-modal-title').textContent = `Permisos de ${member.name || roleStr}`;
+    document.getElementById('permissions-modal-title').textContent = t('permModal.memberTitle', { name: member.name || roleStr });
     permissionsGrid.innerHTML = '';
     
     parsedData.permissionList.forEach(perm => {
@@ -1923,14 +3226,14 @@ function openPromoteModal(prefix, memberIndex) {
     const promoteModal = document.getElementById('promote-modal');
     document.getElementById('promote-member-name').textContent = member.name || roleStr;
     const targetSelect = document.getElementById('promote-target-group');
-    targetSelect.innerHTML = '<option value="" disabled selected>Selecciona un grupo...</option>';
+    targetSelect.innerHTML = `<option value="" disabled selected>${t('move.selectGroup')}...</option>`;
     const groupKeys = Object.keys(parsedData.groups).sort((a, b) => a.localeCompare(b));
     const sourceHierarchy = getRoleHierarchyIndex(prefix);
     groupKeys.forEach(targetPrefix => {
         if (targetPrefix !== prefix && getRoleHierarchyIndex(targetPrefix) < sourceHierarchy) {
             const opt = document.createElement('option');
             opt.value = targetPrefix;
-            opt.textContent = `Grupo ${targetPrefix} (${getRoleLabel(targetPrefix)}) - ${parsedData.groups[targetPrefix].members.length} miembros`;
+            opt.textContent = t('cards.targetOpt', { prefix: targetPrefix, label: getGroupBadgeLabel(targetPrefix), count: parsedData.groups[targetPrefix].members.length });
             targetSelect.appendChild(opt);
         }
     });
@@ -1944,14 +3247,14 @@ function openDemoteModal(prefix, memberIndex) {
     const demoteModal = document.getElementById('demote-modal');
     document.getElementById('demote-member-name').textContent = member.name || roleStr;
     const targetSelect = document.getElementById('demote-target-group');
-    targetSelect.innerHTML = '<option value="" disabled selected>Selecciona un grupo...</option>';
+    targetSelect.innerHTML = `<option value="" disabled selected>${t('move.selectGroup')}...</option>`;
     const groupKeys = Object.keys(parsedData.groups).sort((a, b) => a.localeCompare(b));
     const sourceHierarchy = getRoleHierarchyIndex(prefix);
     groupKeys.forEach(targetPrefix => {
         if (targetPrefix !== prefix && getRoleHierarchyIndex(targetPrefix) > sourceHierarchy) {
             const opt = document.createElement('option');
             opt.value = targetPrefix;
-            opt.textContent = `Grupo ${targetPrefix} (${getRoleLabel(targetPrefix)}) - ${parsedData.groups[targetPrefix].members.length} miembros`;
+            opt.textContent = t('cards.targetOpt', { prefix: targetPrefix, label: getGroupBadgeLabel(targetPrefix), count: parsedData.groups[targetPrefix].members.length });
             targetSelect.appendChild(opt);
         }
     });
@@ -1996,7 +3299,7 @@ document.getElementById('promote-form')?.addEventListener('submit', (e) => {
     if (prefix === null || memberIndex === null) return;
     const targetPrefix = document.getElementById('promote-target-group').value;
     if (!targetPrefix || !parsedData.groups[targetPrefix]) {
-        alert("Por favor selecciona un grupo de destino válido.");
+        alert(t('move.selectTarget'));
         return;
     }
     moveMemberToGroup(prefix, memberIndex, targetPrefix);
@@ -2009,7 +3312,7 @@ document.getElementById('demote-form')?.addEventListener('submit', (e) => {
     if (prefix === null || memberIndex === null) return;
     const targetPrefix = document.getElementById('demote-target-group').value;
     if (!targetPrefix || !parsedData.groups[targetPrefix]) {
-        alert("Por favor selecciona un grupo de destino válido.");
+        alert(t('move.selectTarget'));
         return;
     }
     moveMemberToGroup(prefix, memberIndex, targetPrefix);
@@ -2082,7 +3385,7 @@ function parseBadgeBulkText(text) {
             record.endLine = lineNumber;
             record.parserIssues.push(createBulkIssue(
                 'MALFORMED_LINE', 'warning', lineNumber,
-                'La línea no contiene una clave seguida de dos puntos.'
+                t('badgeIssue.malformedLine')
             ));
             return;
         }
@@ -2110,7 +3413,7 @@ function parseBadgeBulkText(text) {
         if (!field) {
             record.parserIssues.push(createBulkIssue(
                 'UNKNOWN_KEY', 'warning', lineNumber,
-                `La clave "${rawKey}" no está reconocida y será ignorada.`
+                t('badgeIssue.unknownKey', { key: rawKey })
             ));
             return;
         }
@@ -2118,7 +3421,7 @@ function parseBadgeBulkText(text) {
         if (Object.prototype.hasOwnProperty.call(record.fieldLines, field)) {
             record.parserIssues.push(createBulkIssue(
                 'DUPLICATE_FIELD', 'warning', lineNumber,
-                `La clave "${rawKey}" está repetida; se utilizará su último valor.`
+                t('badgeIssue.duplicateField', { key: rawKey })
             ));
         }
         record[field] = value;
@@ -2202,34 +3505,34 @@ function validateBadgeBulkRecords(records, options = {}) {
         const requiredLine = field => record.fieldLines[field] || record.startLine;
 
         if (!String(record.owner || '').trim()) {
-            addIssue('MISSING_OWNER', 'error', requiredLine('owner'), 'Falta el valor obligatorio "badge de:".');
+            addIssue('MISSING_OWNER', 'error', requiredLine('owner'), t('badgeIssue.missingOwner'));
         } else if (!record.ownerName) {
-            addIssue('EMPTY_OWNER_NAME', 'error', requiredLine('owner'), 'El valor de "badge de:" debe contener un nombre además de @.');
+            addIssue('EMPTY_OWNER_NAME', 'error', requiredLine('owner'), t('badgeIssue.emptyOwnerName'));
         } else if (!String(record.owner).trim().startsWith('@')) {
             addIssue(
                 'OWNER_WITHOUT_AT', 'warning', requiredLine('owner'),
-                'El propietario no comienza con @; se conservará exactamente como fue escrito.'
+                t('badgeIssue.ownerWithoutAt')
             );
         }
         if (!String(record.badge || '').trim()) {
-            addIssue('EMPTY_BADGE', 'error', requiredLine('badge'), 'El campo _badge no puede estar vacío.');
+            addIssue('EMPTY_BADGE', 'error', requiredLine('badge'), t('badgeIssue.emptyBadge'));
         }
         if (!String(record.color || '').trim()) {
-            addIssue('MISSING_COLOR', 'error', requiredLine('color'), 'Falta el campo obligatorio _color.');
+            addIssue('MISSING_COLOR', 'error', requiredLine('color'), t('badgeIssue.missingColor'));
         } else if (!normalizedColors.has(record.normalizedColor)) {
             const colorSuggestion = findRemoteAdminColorSuggestion(record.color, normalizedColors);
             addIssue(
                 'INVALID_COLOR', 'error', requiredLine('color'),
-                `El color "${record.color}" no existe en el selector actual.`
-                + (colorSuggestion ? ` ¿Quisiste escribir "${colorSuggestion.value}"?` : '')
+                t('badgeIssue.invalidColor', { color: record.color })
+                + (colorSuggestion ? t('badgeIssue.colorSuggestion', { suggestion: colorSuggestion.value }) : '')
             );
         }
         if (!String(record.steamId || '').trim()) {
-            addIssue('MISSING_STEAM_ID', 'error', requiredLine('steamId'), 'Falta el campo obligatorio _steamID.');
+            addIssue('MISSING_STEAM_ID', 'error', requiredLine('steamId'), t('badgeIssue.missingSteam'));
         } else if (!isValidSteamId64(record.normalizedSteamId) || /@steam/i.test(String(record.steamId))) {
             addIssue(
                 'INVALID_STEAM_ID', 'error', requiredLine('steamId'),
-                'El valor debe ser un SteamID64 público individual de 17 dígitos, sin @steam.'
+                t('badgeIssue.invalidSteam')
             );
         }
 
@@ -2242,8 +3545,8 @@ function validateBadgeBulkRecords(records, options = {}) {
                     sameData ? 'DUPLICATE_INPUT' : 'CONFLICTING_INPUT_DUPLICATE',
                     'warning', requiredLine('steamId'),
                     sameData
-                        ? `SteamID repetido dentro del texto; coincide con el registro ${firstInput.recordNumber}.`
-                        : `SteamID repetido con información diferente al registro ${firstInput.recordNumber}.`
+                        ? t('badgeIssue.dupInput', { n: firstInput.recordNumber })
+                        : t('badgeIssue.conflictInput', { n: firstInput.recordNumber })
                 );
                 record.status = sameData ? 'duplicate' : 'conflict';
                 record.action = sameData ? 'omit' : 'cancel';
@@ -2255,7 +3558,7 @@ function validateBadgeBulkRecords(records, options = {}) {
             if (existingEntries.length > 1) {
                 addIssue(
                     'DUPLICATE_EXISTING_STEAM_ID', 'error', requiredLine('steamId'),
-                    'El SteamID ya aparece más de una vez en RemoteAdmin; corrige esa ambigüedad antes de importar.'
+                    t('badgeIssue.dupExisting')
                 );
             } else if (existingEntries.length === 1) {
                 const existing = existingEntries[0];
@@ -2273,8 +3576,8 @@ function validateBadgeBulkRecords(records, options = {}) {
                     sameData ? 'EXISTING_DUPLICATE' : 'EXISTING_CONFLICT',
                     'warning', requiredLine('steamId'),
                     sameData
-                        ? `El SteamID ya existe en el rol ${existing.roleName} con los mismos datos.`
-                        : `El SteamID ya existe en el rol ${existing.roleName} con información diferente.`
+                        ? t('badgeIssue.existDup', { role: existing.roleName })
+                        : t('badgeIssue.existConflict', { role: existing.roleName })
                 );
                 if (record.status === 'valid') record.status = sameData ? 'duplicate' : 'conflict';
                 if (record.action === 'import') record.action = sameData ? 'omit' : 'cancel';
@@ -2282,22 +3585,22 @@ function validateBadgeBulkRecords(records, options = {}) {
                 if (!existing.group.isNumbered && existing.group.members.length > 1 && (!sameBadge || !sameColor)) {
                     addIssue(
                         'SHARED_ROLE_CONFLICT', 'error', requiredLine('steamId'),
-                        `El rol ${existing.roleName} es compartido por varios usuarios; RemoteAdmin no admite un badge o color individual.`
+                        t('badgeIssue.sharedConflict', { role: existing.roleName })
                     );
                 }
             } else {
                 const destination = state?.groups?.[targetGroup];
                 if (!targetGroup) {
-                    addIssue('TARGET_GROUP_REQUIRED', 'error', record.startLine, 'Selecciona un grupo para los SteamID nuevos.');
+                    addIssue('TARGET_GROUP_REQUIRED', 'error', record.startLine, t('badgeIssue.targetRequired'));
                 } else if (!destination) {
-                    addIssue('TARGET_GROUP_NOT_FOUND', 'error', record.startLine, `El grupo destino "${targetGroup}" no existe.`);
+                    addIssue('TARGET_GROUP_NOT_FOUND', 'error', record.startLine, t('badgeIssue.targetNotFound', { group: targetGroup }));
                 } else if (!destination.isNumbered) {
                     const incomingSignature = badgeRoleSignature(record.badge, record.normalizedColor);
                     if (sharedTargetSignature !== null && incomingSignature !== sharedTargetSignature) {
                         if (sharedTargetInitiallyEmpty) {
                             addIssue(
                                 'SHARED_ROLE_BATCH_CONFLICT', 'warning', record.startLine,
-                                `El grupo ${targetGroup} está vacío y otro registro propone un badge o color distinto; elige una sola combinación.`
+                                t('badgeIssue.sharedBatch', { group: targetGroup })
                             );
                             record.sharedRoleAlternative = true;
                             record.status = 'conflict';
@@ -2305,7 +3608,7 @@ function validateBadgeBulkRecords(records, options = {}) {
                         } else {
                             addIssue(
                                 'SHARED_ROLE_CONFLICT', 'error', record.startLine,
-                                `El grupo ${targetGroup} usa un rol compartido; el badge y color deben coincidir con los del rol.`
+                                t('badgeIssue.sharedTarget', { group: targetGroup })
                             );
                         }
                     } else if (sharedTargetSignature === null
@@ -2417,7 +3720,7 @@ function applyBadgeBulkImport(records, options = {}) {
             result.invalid += 1;
             addApplyIssue(
                 'MULTIPLE_MUTATIONS_SAME_STEAM_ID', 'error',
-                `Hay más de una acción de reemplazo o actualización para el SteamID ${record.normalizedSteamId}; selecciona solo una.`
+                t('badgeIssue.multiMutations', { steam: record.normalizedSteamId })
             );
             return;
         }
@@ -2425,7 +3728,7 @@ function applyBadgeBulkImport(records, options = {}) {
             result.invalid += 1;
             addApplyIssue(
                 'MULTIPLE_SHARED_ROLE_SIGNATURES', 'error',
-                `Hay varias combinaciones de badge y color seleccionadas para el rol compartido ${targetGroup}; elige solo una.`
+                t('badgeIssue.multiShared', { group: targetGroup })
             );
             return;
         }
@@ -2448,14 +3751,14 @@ function applyBadgeBulkImport(records, options = {}) {
                 result.omitted += 1;
                 addApplyIssue(
                     'STEAM_ID_CHANGED_DURING_PREVIEW', 'warning',
-                    `El SteamID ${record.normalizedSteamId} apareció después de la vista previa y fue omitido.`
+                    t('badgeIssue.steamChanged', { steam: record.normalizedSteamId })
                 );
                 return;
             }
             const group = state?.groups?.[targetGroup];
             if (!group) {
                 result.invalid += 1;
-                addApplyIssue('TARGET_GROUP_UNAVAILABLE', 'error', 'El grupo destino ya no está disponible.');
+                addApplyIssue('TARGET_GROUP_UNAVAILABLE', 'error', t('badgeIssue.targetUnavailable'));
                 return;
             }
             if (!group.isNumbered && group.members.length > 0
@@ -2464,7 +3767,7 @@ function applyBadgeBulkImport(records, options = {}) {
                 result.invalid += 1;
                 addApplyIssue(
                     'SHARED_ROLE_CONFLICT', 'error',
-                    `El grupo ${targetGroup} usa un rol compartido; el badge y color ya no coinciden con los del rol.`
+                    t('badgeIssue.sharedStale', { group: targetGroup })
                 );
                 return;
             }
@@ -2478,7 +3781,7 @@ function applyBadgeBulkImport(records, options = {}) {
             result.invalid += 1;
             addApplyIssue(
                 'EXISTING_MEMBER_NOT_UNIQUE', 'error',
-                `No se pudo resolver de forma única el SteamID ${record.normalizedSteamId}.`
+                t('badgeIssue.notUnique', { steam: record.normalizedSteamId })
             );
             return;
         }
@@ -2490,7 +3793,7 @@ function applyBadgeBulkImport(records, options = {}) {
             result.invalid += 1;
             addApplyIssue(
                 'SHARED_ROLE_CONFLICT', 'error',
-                `El rol compartido ${match.roleName} no admite cambios individuales de badge o color.`
+                t('badgeIssue.sharedConflict', { role: match.roleName })
             );
             return;
         }
@@ -2521,7 +3824,7 @@ function invalidateBadgeBulkPreview() {
     const previewBody = document.getElementById('badge-bulk-preview-body');
     if (previewBody) previewBody.replaceChildren();
     const summary = document.getElementById('badge-bulk-summary');
-    if (summary) summary.textContent = 'Sin analizar.';
+    if (summary) summary.textContent = t('badgeBulk.notAnalyzed');
     const confirmButton = document.getElementById('btn-confirm-badges');
     if (confirmButton) confirmButton.disabled = true;
 }
@@ -2551,10 +3854,10 @@ btnCopy.addEventListener('click', async () => {
                 if (!document.execCommand('copy')) throw new Error('No se pudo copiar');
             }
             const oldText = btnCopy.innerHTML;
-            btnCopy.innerHTML = '<i class="ph ph-check" aria-hidden="true"></i> ¡Copiado!';
+            btnCopy.innerHTML = `<i class="ph ph-check" aria-hidden="true"></i> ${t('action.copied')}`;
             setTimeout(() => { btnCopy.innerHTML = oldText; }, 2000);
         } catch (error) {
-            alert('No se pudo copiar automáticamente. Selecciona el texto y cópialo manualmente.');
+            alert(t('action.copyFail'));
         }
     }
 });
@@ -2590,7 +3893,7 @@ if (btnDownload) {
                 }
                 activeRemoteAdminExportResult = latestRemoteAdminResult;
                 if (!latestRemoteAdminResult.valid) {
-                    alert('El archivo RemoteAdmin contiene errores bloqueantes. Revisa la previsualización antes de descargar.');
+                    alert(t('action.downloadBlocked'));
                     return;
                 }
                 activeTab.value = latestRemoteAdminResult.content;
@@ -2600,7 +3903,7 @@ if (btnDownload) {
             if (activeTab.id === 'labapi-output') filename = 'permissions-labapi.yml';
             if (activePermissionsExportResult && activeTab.id === `${activePermissionsExportFramework}-output`) {
                 if (!activePermissionsExportResult.valid) {
-                    alert('La configuración contiene errores bloqueantes. Revisa la previsualización antes de descargar.');
+                    alert(t('action.permsBlocked'));
                     return;
                 }
                 filename = activePermissionsExportResult.filename;
@@ -2619,7 +3922,7 @@ if (btnDownload) {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         } catch (error) {
-            alert(`No se pudo descargar el archivo: ${error?.message || 'el navegador rechazó la descarga.'}`);
+            alert(t('action.downloadFail', { error: error?.message || t('action.downloadFailBrowser') }));
         }
     });
 }
@@ -2732,7 +4035,7 @@ function organizeRemoteAdminMembers(content, context) {
             errors: [organizationIssue(
                 'MEMBERS_ORGANIZATION_UNSAFE',
                 'error',
-                `Members contiene una línea no reconocida entre usuarios: "${unsafeLine.trim()}".`
+                t('orgIssue.stageMembers', { line: unsafeLine.trim() })
             )]
         };
     }
@@ -2778,7 +4081,7 @@ function organizeRemoteAdminRoles(content, context) {
             errors: [organizationIssue(
                 'ROLES_ORGANIZATION_UNSAFE',
                 'error',
-                `Roles contiene una línea no reconocida entre grupos: "${unsafeLine.trim()}".`
+                t('orgIssue.stageRoles', { line: unsafeLine.trim() })
             )]
         };
     }
@@ -2841,7 +4144,7 @@ function organizeRemoteAdminPropertyBlocks(content, context) {
             errors.push(organizationIssue(
                 'ROLE_PROPERTY_BLOCK_INTERLEAVED',
                 'error',
-                `El bloque ${roleName} está intercalado con una línea no reconocida: "${unsafe.trim()}".`
+                t('orgIssue.stageProps', { role: roleName, line: unsafe.trim() })
             ));
             return;
         }
@@ -2997,9 +4300,9 @@ function analyzeRemoteAdminOrganizationContent(content) {
             target.push(createExportIssue(code, message));
         }
     };
-    if (!document.sections.members) addIssue(errors, 'MEMBERS_SECTION_MISSING', 'Falta la sección Members.');
-    if (!document.sections.roles) addIssue(errors, 'ROLES_SECTION_MISSING', 'Falta la sección Roles o Groups.');
-    if (!document.sections.permissions) addIssue(errors, 'PERMISSIONS_SECTION_MISSING', 'Falta la sección Permissions.');
+    if (!document.sections.members) addIssue(errors, 'MEMBERS_SECTION_MISSING', t('val.secMissing', { section: 'Members' }));
+    if (!document.sections.roles) addIssue(errors, 'ROLES_SECTION_MISSING', t('val.secMissing', { section: 'Roles o Groups' }));
+    if (!document.sections.permissions) addIssue(errors, 'PERMISSIONS_SECTION_MISSING', t('val.secMissing', { section: 'Permissions' }));
 
     const declaredRoles = new Set(document.roleEntries.map(entry => entry.roleName));
     const usersById = new Map();
@@ -3015,46 +4318,46 @@ function analyzeRemoteAdminOrganizationContent(content) {
             addIssue(
                 errors,
                 validatedId.provider === 'steam' ? 'INVALID_STEAM_ID' : 'INVALID_REMOTE_ADMIN_ID',
-                `El identificador "${entry.id}" del rol ${entry.roleName} no es un ID RemoteAdmin válido.`
+                t('val.badId', { id: entry.id, role: entry.roleName })
             );
         }
         if (!declaredRoles.has(entry.roleName)) {
-            addIssue(errors, 'MEMBER_ROLE_UNKNOWN', `El usuario ${entry.id} referencia el rol inexistente ${entry.roleName}.`);
+            addIssue(errors, 'MEMBER_ROLE_UNKNOWN', t('val.memberRoleUnknown', { id: entry.id, role: entry.roleName }));
         }
     });
     usersById.forEach((entries, userId) => {
         if (entries.length < 2) return;
         const signatures = new Set(entries.map(entry => `${entry.id}|${entry.roleName}|${entry.rawComment}`));
         if (signatures.size === 1) {
-            addIssue(warnings, 'EXACT_MEMBER_DUPLICATE', `El registro ${userId} está repetido exactamente ${entries.length} veces; no se eliminó automáticamente.`);
+            addIssue(warnings, 'EXACT_MEMBER_DUPLICATE', t('val.exactDup', { id: userId, count: entries.length }));
         } else {
             const validatedId = validateRemoteAdminUserId(entries[0].id);
             addIssue(
                 errors,
                 validatedId.provider === 'steam' ? 'DUPLICATE_STEAM_ID' : 'DUPLICATE_REMOTE_ADMIN_ID',
-                `El ID ${validatedId.normalized || userId} aparece ${entries.length} veces (${entries.map(entry => entry.roleName).join(', ')}).`
+                t('val.dupId', { id: validatedId.normalized || userId, count: entries.length, roles: entries.map(entry => entry.roleName).join(', ') })
             );
         }
     });
     usersByRole.forEach((entries, roleName) => {
         if (entries.length > 1) {
-            addIssue(warnings, 'SHARED_INTERNAL_ROLE', `El ID interno ${roleName} está compartido por ${entries.length} usuarios; se conservó sin cambios.`);
+            addIssue(warnings, 'SHARED_INTERNAL_ROLE', t('val.sharedInternal', { role: roleName, count: entries.length }));
         }
     });
 
     const roleCounts = new Map();
     document.roleEntries.forEach(entry => roleCounts.set(entry.roleName, (roleCounts.get(entry.roleName) || 0) + 1));
     roleCounts.forEach((count, roleName) => {
-        if (count > 1) addIssue(warnings, 'DUPLICATE_ROLE_DECLARATION', `El rol ${roleName} está declarado ${count} veces.`);
-        if (!usersByRole.has(roleName)) addIssue(warnings, 'ROLE_WITHOUT_MEMBER', `El rol ${roleName} no tiene miembros asignados.`);
+        if (count > 1) addIssue(warnings, 'DUPLICATE_ROLE_DECLARATION', t('val.dupRoleDecl', { role: roleName, count }));
+        if (!usersByRole.has(roleName)) addIssue(warnings, 'ROLE_WITHOUT_MEMBER', t('val.noMember', { role: roleName }));
     });
 
     document.rolePropertyNodes.forEach((properties, roleName) => {
         if (!declaredRoles.has(roleName)) {
-            addIssue(warnings, 'PROPERTY_ROLE_UNDECLARED', `Existen propiedades para ${roleName}, pero el rol no está declarado.`);
+            addIssue(warnings, 'PROPERTY_ROLE_UNDECLARED', t('val.propUndeclared', { role: roleName }));
         }
         properties.forEach((nodes, property) => {
-            if (nodes.length > 1) addIssue(warnings, 'DUPLICATE_ROLE_PROPERTY', `La propiedad ${roleName}_${property} aparece ${nodes.length} veces.`);
+            if (nodes.length > 1) addIssue(warnings, 'DUPLICATE_ROLE_PROPERTY', t('val.dupRolePropShort', { name: `${roleName}_${property}`, count: nodes.length }));
         });
     });
     const requiredProperties = ['badge', 'color', 'cover', 'hidden', 'kick_power', 'required_kick_power'];
@@ -3062,17 +4365,17 @@ function analyzeRemoteAdminOrganizationContent(content) {
         const properties = document.rolePropertyNodes.get(roleName);
         const missing = requiredProperties.filter(property => !properties?.has(property));
         if (missing.length > 0) {
-            addIssue(errors, 'ROLE_PROPERTIES_MISSING', `El rol ${roleName} no contiene: ${missing.join(', ')}.`);
+            addIssue(errors, 'ROLE_PROPERTIES_MISSING', t('val.rolePropsMissing', { role: roleName, list: missing.join(', ') }));
         }
     });
 
     document.permissionEntries.forEach(entry => {
         const seenRoles = new Set();
         entry.roles.forEach(roleName => {
-            if (seenRoles.has(roleName)) addIssue(warnings, 'DUPLICATE_PERMISSION_ROLE', `${entry.permission} repite el rol ${roleName}.`);
+            if (seenRoles.has(roleName)) addIssue(warnings, 'DUPLICATE_PERMISSION_ROLE', t('val.dupPermRole', { perm: entry.permission, role: roleName }));
             seenRoles.add(roleName);
             if (!declaredRoles.has(roleName)) {
-                addIssue(errors, 'PERMISSION_ROLE_UNKNOWN', `El permiso ${entry.permission} referencia el rol inexistente ${roleName}.`);
+                addIssue(errors, 'PERMISSION_ROLE_UNKNOWN', t('val.permUnknown', { perm: entry.permission, role: roleName }));
             }
         });
     });
@@ -3080,7 +4383,7 @@ function analyzeRemoteAdminOrganizationContent(content) {
     const context = createRemoteAdminRoleOrderContext(document);
     const customPrefixes = [...context.unknownPrefixOrder.keys()];
     if (customPrefixes.length > 0) {
-        addIssue(warnings, 'CUSTOM_ROLE_PREFIXES', `Se conservaron rangos personalizados después de la jerarquía conocida: ${customPrefixes.join(', ')}.`);
+        addIssue(warnings, 'CUSTOM_ROLE_PREFIXES', t('val.customPrefixes', { list: customPrefixes.join(', ') }));
     }
     const propertyCount = [...document.rolePropertyNodes.values()]
         .reduce((total, properties) => total + [...properties.values()].reduce((sum, nodes) => sum + nodes.length, 0), 0);
@@ -3158,19 +4461,19 @@ function buildRemoteAdminOrganization(content, state = parsedData, sourceDocumen
     if (organizedResult.unknownProperties.length > 0) {
         mergeIssue(warnings, createExportIssue(
             'UNKNOWN_ROLE_PROPERTIES_PRESERVED',
-            `Se conservaron propiedades de rol no reconocidas: ${organizedResult.unknownProperties.join(', ')}.`
+            t('orgIssue.unknownProps', { list: organizedResult.unknownProperties.join(', ') })
         ));
     }
     if (!semanticEqual) {
         mergeIssue(errors, createExportIssue(
             'ORGANIZATION_SEMANTIC_CHANGE',
-            'La comparación semántica detectó pérdida o modificación de información.'
+            t('orgIssue.semanticChange')
         ));
     }
     if (!idempotent) {
         mergeIssue(errors, createExportIssue(
             'ORGANIZATION_NOT_IDEMPOTENT',
-            'Una segunda organización produciría un resultado diferente.'
+            t('orgIssue.notIdempotent')
         ));
     }
     const rereadDocument = parseRemoteAdminDocument(organized);
@@ -3180,7 +4483,7 @@ function buildRemoteAdminOrganization(content, state = parsedData, sourceDocumen
         && rereadDocument.sections.permissions
     );
     if (!rereadValid) {
-        mergeIssue(errors, createExportIssue('ORGANIZED_REREAD_FAILED', 'El parser no pudo recuperar todas las secciones requeridas.'));
+        mergeIssue(errors, createExportIssue('ORGANIZED_REREAD_FAILED', t('orgIssue.rereadFailed')));
     }
     const changed = original !== organized;
     const sourceErrorKeys = new Set([
@@ -3398,7 +4701,7 @@ function buildRemoteAdminIdRenumberPlan(content, options = {}) {
         if (count > 1) {
             errors.push(createExportIssue(
                 'DUPLICATE_ROLE_DECLARATION',
-                `La ID interna ${roleName} está declarada ${count} veces; resuelve la ambigüedad antes de renumerar.`
+                t('renIssue.planDupDecl', { role: roleName, count })
             ));
         }
     });
@@ -3406,7 +4709,7 @@ function buildRemoteAdminIdRenumberPlan(content, options = {}) {
     if (skippedRoles.length > 0) {
         warnings.push(createExportIssue(
             'NON_NUMBERED_ROLES_SKIPPED',
-            `Se conservaron IDs sin un sufijo numérico seguro: ${skippedRoles.sort(compareRoleNames).join(', ')}.`
+            t('renIssue.skipped', { list: skippedRoles.sort(compareRoleNames).join(', ') })
         ));
     }
 
@@ -3432,7 +4735,7 @@ function buildRemoteAdminIdRenumberPlan(content, options = {}) {
             if (owners.length > 1) {
                 errors.push(createExportIssue(
                     'DUPLICATE_NUMERIC_ROLE_SUFFIX',
-                    `El rango ${prefix} utiliza el número ${number} mediante varias IDs (${owners.join(', ')}).`
+                    t('renIssue.dupNumeric', { prefix, number, list: owners.join(', ') })
                 ));
             }
         });
@@ -3577,7 +4880,7 @@ function buildRemoteAdminIdRenumberPlan(content, options = {}) {
         if (oldRoles.length > 1) {
             errors.push(createExportIssue(
                 'ROLE_RENUMBER_COLLISION',
-                `La ID nueva ${targetRole} sería utilizada por ${oldRoles.join(', ')}.`
+                t('renIssue.collision', { role: targetRole, list: oldRoles.join(', ') })
             ));
         }
     });
@@ -3647,25 +4950,25 @@ function buildRemoteAdminIdRenumberPlan(content, options = {}) {
     if (customPrefixes.length > 0) {
         warnings.push(createExportIssue(
             'CUSTOM_PREFIXES_RENUMBERED',
-            `Los rangos personalizados se procesaron independientemente: ${customPrefixes.join(', ')}.`
+            t('renIssue.customPrefixes', { list: customPrefixes.join(', ') })
         ));
     }
     if (reservedRoles.size > 0) {
         warnings.push(createExportIssue(
             'RESERVED_ROLE_IDS_PRESERVED',
-            `Se conservaron IDs marcadas explícitamente como reservadas: ${[...reservedRoles].join(', ')}.`
+            t('renIssue.reservedKept', { list: [...reservedRoles].join(', ') })
         ));
     }
     if (reusedDeclaredRoles.size > 0) {
         warnings.push(createExportIssue(
             'ROLE_IDS_REUSED',
-            `Se reutilizaron ${reusedDeclaredRoles.size} ID(s) declaradas no utilizadas: ${[...reusedDeclaredRoles].join(', ')}.`
+            t('renIssue.reusedDeclared', { count: reusedDeclaredRoles.size, list: [...reusedDeclaredRoles].join(', ') })
         ));
     }
     if (reusedUndeclaredRoles.size > 0) {
         warnings.push(createExportIssue(
             'UNDECLARED_ROLE_IDS_USED',
-            `Se aprovecharon ${reusedUndeclaredRoles.size} ID(s) no declaradas disponibles: ${[...reusedUndeclaredRoles].join(', ')}.`
+            t('renIssue.reusedUndeclared', { count: reusedUndeclaredRoles.size, list: [...reusedUndeclaredRoles].join(', ') })
         ));
     }
 
@@ -3791,7 +5094,7 @@ function rewriteRemoteAdminRoleReferences(content, roleMap, options = {}) {
                     if (containsExactRemoteAdminRoleToken(value, roleName)) {
                         issues.push(createExportIssue(
                             'UNKNOWN_PROPERTY_ROLE_REFERENCE',
-                            `Línea ${lineIndex + 1}: la propiedad desconocida ${oldRole}_${property} contiene la ID ${roleName}; no se modificó su valor.`
+                            t('renIssue.unknownPropRef', { line: lineIndex + 1, name: `${oldRole}_${property}`, role: roleName })
                         ));
                     }
                 });
@@ -3806,7 +5109,7 @@ function rewriteRemoteAdminRoleReferences(content, roleMap, options = {}) {
                 if (containsExactRemoteAdminRoleToken(line, roleName)) {
                     issues.push(createExportIssue(
                         'UNMANAGED_ROLE_REFERENCE',
-                        `Línea ${lineIndex + 1}: se encontró una referencia no reconocida a ${roleName}; debe revisarse manualmente.`
+                        t('renIssue.unmanagedRef', { line: lineIndex + 1, role: roleName })
                     ));
                 }
             });
@@ -4004,19 +5307,19 @@ function buildRemoteAdminIdRenumbering(content, state = parsedData, sourceDocume
     if (!semanticEqual) {
         mergeIssue(errors, createExportIssue(
             'ROLE_RENUMBER_SEMANTIC_CHANGE',
-            'La transformación no conservó exactamente la identidad o propiedades de los usuarios.'
+            t('renIssue.semanticChange')
         ));
     }
     if (!rereadValid) {
         mergeIssue(errors, createExportIssue(
             'ROLE_RENUMBER_REREAD_FAILED',
-            'El parser no pudo recuperar las secciones requeridas después de renumerar.'
+            t('renIssue.rereadFailed')
         ));
     }
     if (!idempotent) {
         mergeIssue(errors, createExportIssue(
             'ROLE_RENUMBER_NOT_IDEMPOTENT',
-            'Una segunda renumeración produciría IDs diferentes.'
+            t('renIssue.notIdempotent')
         ));
     }
     if (JSON.stringify(beforeAnalysis.stats) !== JSON.stringify(afterAnalysis.stats)) {
@@ -4024,7 +5327,7 @@ function buildRemoteAdminIdRenumbering(content, state = parsedData, sourceDocume
         if (beforeAnalysis.stats.members !== afterAnalysis.stats.members) {
             mergeIssue(errors, createExportIssue(
                 'ROLE_RENUMBER_COUNT_MISMATCH',
-                'La cantidad de usuarios cambió durante la renumeración.'
+                t('renIssue.countMismatch')
             ));
         }
     }
@@ -4595,25 +5898,25 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
     const acceptedColors = getAcceptedBadgeColors();
 
     if (!generatedDocument.sections.members) {
-        addError('MEMBERS_SECTION_MISSING', 'La configuración generada no contiene la sección Members.');
+        addError('MEMBERS_SECTION_MISSING', t('val.genSecMissing', { section: 'Members' }));
     }
     if (!generatedDocument.sections.roles) {
-        addError('ROLES_SECTION_MISSING', 'La configuración generada no contiene la sección Roles o Groups.');
+        addError('ROLES_SECTION_MISSING', t('val.genSecMissing', { section: 'Roles o Groups' }));
     }
     if (!generatedDocument.sections.permissions) {
-        addError('PERMISSIONS_SECTION_MISSING', 'La configuración generada no contiene la sección Permissions.');
+        addError('PERMISSIONS_SECTION_MISSING', t('val.genSecMissing', { section: 'Permissions' }));
     }
     if (sourceDocument?.roleSectionName
         && generatedDocument.roleSectionName !== sourceDocument.roleSectionName) {
         addError(
             'ROLE_SECTION_STYLE_CHANGED',
-            `La sección ${sourceDocument.roleSectionName} fue cambiada a ${generatedDocument.roleSectionName || 'ninguna'}.`
+            t('val.roleStyleChanged', { from: sourceDocument.roleSectionName, to: generatedDocument.roleSectionName || t('val.noneValue') })
         );
     }
     if (generatedDocument.duplicateSections.length > 0) {
         addError(
             'DUPLICATE_MANAGED_SECTION',
-            'La configuración contiene secciones Members, Roles/Groups o Permissions duplicadas.'
+            t('val.dupManagedSection')
         );
     }
     const generatedRolesSection = generatedDocument.sections.roles;
@@ -4624,7 +5927,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
             .forEach(() => {
                 addError(
                     'GROUP_NAME_MISSING',
-                    `La sección ${generatedDocument.roleSectionName || 'Roles'} contiene un grupo sin nombre.`
+                    t('val.groupNameMissing', { section: generatedDocument.roleSectionName || 'Roles' })
                 );
             });
     }
@@ -4643,7 +5946,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
                 : 'INVALID_REMOTE_ADMIN_ID';
             addError(
                 issueCode,
-                `El identificador "${rawId || '(vacío)'}" del rol ${roleName || '(sin rol)'} no es un ID RemoteAdmin válido.`
+                t('val.badId', { id: rawId || t('val.emptyId'), role: roleName || t('val.noRole') })
             );
         } else {
             if (!userIdOwners.has(validatedId.normalized)) {
@@ -4657,7 +5960,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
         if (!roleName || !currentRoleNames.has(roleName)) {
             addError(
                 'MEMBER_ROLE_UNKNOWN',
-                `El usuario ${rawId || '(sin ID)'} referencia el rol inexistente ${roleName || '(vacío)'}.`
+                t('val.memberRoleUnknown', { id: rawId || t('val.noId'), role: roleName || t('val.emptyRole') })
             );
         }
     });
@@ -4665,7 +5968,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
         if (roles.length > 1) {
             addError(
                 provider === 'steam' ? 'DUPLICATE_STEAM_ID' : 'DUPLICATE_REMOTE_ADMIN_ID',
-                `El ID ${userId} aparece ${roles.length} veces (${roles.join(', ')}).`
+                t('val.dupId', { id: userId, count: roles.length, roles: roles.join(', ') })
             );
         }
     });
@@ -4675,7 +5978,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
             if (nodes.length > 1) {
                 addWarning(
                     'DUPLICATE_ROLE_PROPERTY',
-                    `La propiedad ${roleName}_${property} aparece ${nodes.length} veces; se conserva literalmente y el último valor es el efectivo.`
+                    t('val.dupRoleProp', { name: `${roleName}_${property}`, count: nodes.length })
                 );
             }
         });
@@ -4688,7 +5991,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
         if (count > 1) {
             addWarning(
                 'DUPLICATE_PERMISSION',
-                `El permiso ${permission} aparece ${count} veces; se conserva literalmente mientras no sea editado.`
+                t('val.dupPerm', { perm: permission, count })
             );
         }
     });
@@ -4696,22 +5999,22 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
     const propertyNames = ['badge', 'color', 'cover', 'hidden', 'kick_power', 'required_kick_power'];
     roleEntries.forEach(({ roleName, data }) => {
         if (!roleName) {
-            addError('ROLE_NAME_MISSING', 'Existe un rol sin nombre.');
+            addError('ROLE_NAME_MISSING', t('val.roleNameMissing'));
             return;
         }
         const color = String(data.color || '').trim().toLowerCase();
         if (!acceptedColors.has(color)) {
-            addError('INVALID_ROLE_COLOR', `El rol ${roleName} utiliza el color no admitido "${data.color}".`);
+            addError('INVALID_ROLE_COLOR', t('val.invalidRoleColor', { role: roleName, color: data.color }));
         }
         if (!configScalar(data.badge)) {
-            addWarning('EMPTY_ROLE_BADGE', `El rol ${roleName} no tiene badge visible.`);
+            addWarning('EMPTY_ROLE_BADGE', t('val.emptyRoleBadge', { role: roleName }));
         }
         const generatedProperties = generatedDocument.rolePropertyNodes.get(roleName);
         const missingProperties = propertyNames.filter(property => !generatedProperties?.has(property));
         if (missingProperties.length > 0) {
             addError(
                 'ROLE_PROPERTIES_MISSING',
-                `El rol ${roleName} no contiene las propiedades requeridas: ${missingProperties.join(', ')}.`
+                t('val.rolePropsMissing', { role: roleName, list: missingProperties.join(', ') })
             );
         }
         ['cover', 'hidden'].forEach(property => {
@@ -4719,7 +6022,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
             if (rawValue && !/^(?:true|false|default)$/i.test(rawValue)) {
                 addError(
                     'INVALID_ROLE_BOOLEAN',
-                    `La propiedad ${roleName}_${property} debe ser true, false o default; se encontró "${rawValue}".`
+                    t('val.invalidRoleBool', { name: `${roleName}_${property}`, value: rawValue })
                 );
             }
         });
@@ -4734,7 +6037,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
             if (rawValue && !validPower) {
                 addError(
                     'INVALID_ROLE_POWER',
-                    `La propiedad ${roleName}_${property} debe ser default o un entero entre 0 y 255; se encontró "${rawValue}".`
+                    t('val.invalidRolePower', { name: `${roleName}_${property}`, value: rawValue })
                 );
             }
         });
@@ -4745,7 +6048,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
             if (!currentRoleNames.has(roleName)) {
                 addError(
                     'PERMISSION_ROLE_UNKNOWN',
-                    `El permiso ${permission} referencia el rol inexistente ${roleName}.`
+                    t('val.permUnknown', { perm: permission, role: roleName })
                 );
             }
         });
@@ -4754,7 +6057,7 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
         if (!currentRoleNames.has(roleName)) {
             addError(
                 'OVERRIDE_PASSWORD_ROLE_UNKNOWN',
-                `override_password_role referencia el rol inexistente ${roleName}.`
+                t('val.overrideUnknown', { role: roleName })
             );
         }
     });
@@ -4764,25 +6067,25 @@ function validateGeneratedRemoteAdminContent(content, state = parsedData, source
         if (!generatedRoleNames.has(roleName)) {
             addError(
                 'GENERATED_MEMBER_ROLE_UNDECLARED',
-                `El usuario ${member.id} quedó asociado a ${roleName}, pero ese rol no aparece en ${generatedDocument.roleSectionName || 'Roles'}.`
+                t('val.memberRoleUndeclared', { id: member.id, role: roleName, section: generatedDocument.roleSectionName || 'Roles' })
             );
         }
     });
     if (generatedDocument.memberEntries.length !== currentMembers.length) {
         addError(
             'MEMBER_COUNT_MISMATCH',
-            `Se esperaban ${currentMembers.length} miembros y se generaron ${generatedDocument.memberEntries.length}.`
+            t('val.memberCount', { expected: currentMembers.length, generated: generatedDocument.memberEntries.length })
         );
     }
 
     const memberRoleNames = new Set(currentMembers.map(entry => entry.roleName));
     roleEntries.forEach(({ roleName }) => {
         if (!memberRoleNames.has(roleName)) {
-            addWarning('ROLE_WITHOUT_MEMBER', `El rol ${roleName} no tiene miembros asignados.`);
+            addWarning('ROLE_WITHOUT_MEMBER', t('val.noMember', { role: roleName }));
         }
     });
     if (currentMembers.length === 0) {
-        addError('NO_REMOTE_ADMIN_MEMBERS', 'No se encontraron miembros para exportar.');
+        addError('NO_REMOTE_ADMIN_MEMBERS', t('val.noMembers'));
     }
 
     return { errors, warnings, document: generatedDocument };
@@ -4895,6 +6198,116 @@ function getRemoteAdminDiagnosticStats(document) {
     };
 }
 
+STRINGS.es.diag.msg = {
+    emptyValue: '(vacío)',
+    RA_MEMBERS_SECTION_MISSING: { title: 'Falta {label}', text: 'No se encontró la sección obligatoria {label}; las relaciones no pueden validarse de forma segura.' },
+    RA_ROLES_SECTION_MISSING: { title: 'Falta {label}', text: 'No se encontró la sección obligatoria {label}; las relaciones no pueden validarse de forma segura.' },
+    RA_PERMISSIONS_SECTION_MISSING: { title: 'Falta {label}', text: 'No se encontró la sección obligatoria {label}; las relaciones no pueden validarse de forma segura.' },
+    RA_DUPLICATE_SECTION: { title: 'Sección administrada duplicada', text: 'La sección {section} aparece más de una vez. Debe elegirse qué contenido conservar.' },
+    RA_GROUP_NAME_MISSING: { title: 'Grupo sin nombre', text: '{section} contiene una entrada “-” sin ID interna.' },
+    RA_MEMBER_SYNTAX_INVALID: { title: 'Sintaxis inválida en {section}', text: 'La línea parece una entrada administrada, pero el parser no puede interpretarla con seguridad.' },
+    RA_ROLE_SYNTAX_INVALID: { title: 'Sintaxis inválida en {section}', text: 'La línea parece una entrada administrada, pero el parser no puede interpretarla con seguridad.' },
+    RA_PERMISSION_SYNTAX_INVALID: { title: 'Sintaxis inválida en {section}', text: 'La línea parece una entrada administrada, pero el parser no puede interpretarla con seguridad.' },
+    RA_INVALID_STEAMID: { title: 'Identificador de usuario inválido', text: '“{id}” no cumple el formato admitido por RemoteAdmin.' },
+    RA_INVALID_USER_ID: { title: 'Identificador de usuario inválido', text: '“{id}” no cumple el formato admitido por RemoteAdmin.' },
+    RA_MEMBER_ROLE_MISSING: { title: 'Miembro apunta a una ID inexistente', text: '{id} referencia {role}, pero esa ID no está declarada en {section}.' },
+    RA_DUPLICATE_STEAM_PROVIDER: { title: 'Proveedor @steam repetido', text: 'El sufijo @steam está duplicado y puede normalizarse sin cambiar la identidad.' },
+    RA_STEAM_PROVIDER_MISSING: { title: 'Falta el proveedor @steam', text: 'La línea contiene un SteamID64 válido, pero falta el sufijo requerido @steam.' },
+    RA_EXACT_MEMBER_DUPLICATE: { title: 'Miembro duplicado exactamente', text: 'El registro {id} es idéntico a uno anterior y puede eliminarse con seguridad.' },
+    RA_DUPLICATE_STEAMID: { title: 'Identificador asociado a usuarios distintos', text: '{id} está asociado a {roles}. Elige explícitamente cuál debe conservarse.', keep: 'Conservar {role} (línea {line})' },
+    RA_DUPLICATE_USER_ID: { title: 'Identificador asociado a usuarios distintos', text: '{id} está asociado a {roles}. Elige explícitamente cuál debe conservarse.', keep: 'Conservar {role} (línea {line})' },
+    RA_DUPLICATE_INTERNAL_ID: { title: 'ID interna compartida por varios usuarios', text: '{role} pertenece a {count} usuarios. No se puede elegir automáticamente una asociación.' },
+    RA_SHARED_ROLE: { title: 'Grupo compartido', text: '{role} es un grupo sin numeración compartido por {count} usuarios; se conservará así.' },
+    RA_DUPLICATE_ROLE_DECLARATION: { title: 'ID interna declarada varias veces', text: '{role} aparece {count} veces en {section}.' },
+    RA_INVALID_INTERNAL_ID_NUMBER: { title: 'Número de ID interna inválido', text: '{role} debe utilizar un sufijo numérico mayor o igual que 1.' },
+    RA_ID_DECLARED_UNUSED: { title: 'ID declarada pero no utilizada', text: '{role} está declarada pero actualmente no está siendo utilizada. Esta ID puede reutilizarse durante Reorganizar IDs.' },
+    RA_ORPHAN_ROLE: { title: 'Rol sin usuario', text: '{role} está declarado y puede ser válido, pero no tiene un usuario en Members.' },
+    RA_REQUIRED_PROPERTIES_MISSING: { title: 'Propiedades obligatorias faltantes', text: '{role} no contiene: {list}.' },
+    RA_ORPHAN_PROPERTY_BLOCK: { title: 'Bloque de propiedades sin rol declarado', text: 'Hay propiedades para {role}, pero esa ID no está declarada. Se conservarán hasta que decidas qué hacer.' },
+    RA_EXACT_PROPERTY_DUPLICATE: { title: 'Propiedad duplicada exactamente', text: '{name} repite el mismo valor y la copia anterior puede eliminarse.' },
+    RA_CONFLICTING_PROPERTY_DUPLICATE: { title: 'Propiedad duplicada con valores diferentes', text: '{name} contiene {values}. El último valor es efectivo, pero debes elegir cuál conservar.', keep: 'Conservar “{value}” (línea {line})' },
+    RA_INVALID_COLOR: { title: 'Color de badge no admitido', text: '“{value}” no existe. La coincidencia más probable es “{suggestion}”.', textNoSuggestion: '“{value}” no existe en la lista de colores aceptados.' },
+    RA_COLOR_CASE_NORMALIZATION: { title: 'Color con mayúsculas', text: 'El color “{value}” es válido, pero RemoteAdmin usa “{lower}” de forma consistente.' },
+    RA_EMPTY_BADGE: { title: 'Badge vacío', text: '{role} no mostrará texto de badge.' },
+    RA_INVALID_BOOLEAN: { title: 'Valor booleano inválido', text: '{name} debe ser true, false o default; se encontró “{value}”.' },
+    RA_INVALID_KICK_POWER: { title: 'Poder de expulsión inválido', text: '{name} debe ser default o un entero entre 0 y 255; se encontró “{value}”.' },
+    RA_UNKNOWN_PROPERTY: { title: 'Propiedad desconocida conservada', text: '{name} no es administrada por la página y no será eliminada ni modificada.' },
+    RA_PROPERTY_COLON_MISSING: { title: 'Falta “:” en una propiedad', text: 'La línea tiene una clave conocida y un valor inequívoco, pero falta el separador.' },
+    RA_PERMISSION_ROLE_MISSING: { title: 'Permiso apunta a una ID inexistente', text: '{perm} referencia {role}, que no está declarada.' },
+    RA_DUPLICATE_PERMISSION_ROLE: { title: 'ID repetida en un permiso', text: '{perm} repite una o más IDs; se pueden quitar las copias sin cambiar el permiso.' },
+    RA_EMPTY_PERMISSION: { title: 'Permiso sin IDs asignadas', text: '{perm} tiene una lista vacía. Esto puede ser intencional.' },
+    RA_UNKNOWN_PERMISSION: { title: 'Permiso desconocido conservado', text: '{perm} no está en el catálogo actual de la página y se conservará literalmente.' },
+    RA_EXACT_PERMISSION_DUPLICATE: { title: 'Permiso duplicado exactamente', text: '{perm} repite la misma lista y la copia anterior puede eliminarse.' },
+    RA_CONFLICTING_PERMISSION_DUPLICATE: { title: 'Permiso duplicado con listas diferentes', text: '{perm} aparece varias veces con asignaciones diferentes. Debes elegir o combinar las listas.' },
+    RA_OVERRIDE_ROLE_MISSING: { title: 'Contraseña apunta a una ID inexistente', text: 'override_password_role referencia {role}, que no está declarada.' },
+    RA_DUPLICATE_OVERRIDE_ROLE: { title: 'ID repetida en override_password_role', text: 'La lista de roles de contraseña contiene duplicados exactos que pueden eliminarse.' },
+    RA_DUPLICATE_GLOBAL_SETTING: { title: 'Configuración global duplicada', text: '{key} aparece {count} veces. El último valor es efectivo; revisa cuál debe conservarse.' },
+    RA_INVALID_GLOBAL_BOOLEAN: { title: 'Valor global booleano inválido', textCase: '{key} utiliza mayúsculas; puede normalizarse a {value}.', textInvalid: '{key} debe ser true o false; se encontró “{value}”.' },
+    RA_ID_UNDECLARED_UNUSED: { title: 'ID disponible no declarada', text: '{role} no está declarada ni utilizada. Puede utilizarse durante Reorganizar IDs.' },
+    RA_ID_RESERVED: { title: 'ID reservada', text: '{role} está reservada explícitamente y no será utilizada durante la reorganización.' },
+    RA_INTERNAL_ID_GAPS: { title: 'Saltos en la numeración interna', text: '{prefix} omite {list}{more}. Puedes usar “Reorganizar IDs” con previsualización.' },
+    RA_TRAILING_WHITESPACE: { title: 'Espacios al final de línea', text: 'Los espacios finales no aportan información y pueden eliminarse.' },
+    RA_EXCESS_BLANK_LINE: { title: 'Línea vacía redundante', text: 'Se conservará una sola línea vacía entre bloques.' },
+    secProps: 'Propiedades',
+    secGlobal: 'Configuración global',
+    secFormat: 'Formato'
+};
+
+STRINGS.en.diag.msg = {
+    emptyValue: '(empty)',
+    RA_MEMBERS_SECTION_MISSING: { title: 'Missing {label}', text: 'Required section {label} was not found; relations cannot be validated safely.' },
+    RA_ROLES_SECTION_MISSING: { title: 'Missing {label}', text: 'Required section {label} was not found; relations cannot be validated safely.' },
+    RA_PERMISSIONS_SECTION_MISSING: { title: 'Missing {label}', text: 'Required section {label} was not found; relations cannot be validated safely.' },
+    RA_DUPLICATE_SECTION: { title: 'Duplicated managed section', text: 'Section {section} appears more than once. You must choose which content to keep.' },
+    RA_GROUP_NAME_MISSING: { title: 'Unnamed group', text: '{section} contains a “-” entry with no internal ID.' },
+    RA_MEMBER_SYNTAX_INVALID: { title: 'Invalid syntax in {section}', text: 'The line looks like a managed entry, but the parser cannot interpret it safely.' },
+    RA_ROLE_SYNTAX_INVALID: { title: 'Invalid syntax in {section}', text: 'The line looks like a managed entry, but the parser cannot interpret it safely.' },
+    RA_PERMISSION_SYNTAX_INVALID: { title: 'Invalid syntax in {section}', text: 'The line looks like a managed entry, but the parser cannot interpret it safely.' },
+    RA_INVALID_STEAMID: { title: 'Invalid user identifier', text: '“{id}” does not meet the format supported by RemoteAdmin.' },
+    RA_INVALID_USER_ID: { title: 'Invalid user identifier', text: '“{id}” does not meet the format supported by RemoteAdmin.' },
+    RA_MEMBER_ROLE_MISSING: { title: 'Member points to a nonexistent ID', text: '{id} references {role}, but that ID is not declared in {section}.' },
+    RA_DUPLICATE_STEAM_PROVIDER: { title: 'Duplicated @steam provider', text: 'The @steam suffix is duplicated and can be normalized without changing the identity.' },
+    RA_STEAM_PROVIDER_MISSING: { title: 'Missing @steam provider', text: 'The line contains a valid SteamID64, but the required @steam suffix is missing.' },
+    RA_EXACT_MEMBER_DUPLICATE: { title: 'Exactly duplicated member', text: 'Record {id} is identical to a previous one and can be safely removed.' },
+    RA_DUPLICATE_STEAMID: { title: 'Identifier linked to different users', text: '{id} is linked to {roles}. Explicitly choose which one to keep.', keep: 'Keep {role} (line {line})' },
+    RA_DUPLICATE_USER_ID: { title: 'Identifier linked to different users', text: '{id} is linked to {roles}. Explicitly choose which one to keep.', keep: 'Keep {role} (line {line})' },
+    RA_DUPLICATE_INTERNAL_ID: { title: 'Internal ID shared by several users', text: '{role} belongs to {count} users. No association can be chosen automatically.' },
+    RA_SHARED_ROLE: { title: 'Shared group', text: '{role} is an unnumbered group shared by {count} users; it will be kept as is.' },
+    RA_DUPLICATE_ROLE_DECLARATION: { title: 'Internal ID declared several times', text: '{role} appears {count} times in {section}.' },
+    RA_INVALID_INTERNAL_ID_NUMBER: { title: 'Invalid internal ID number', text: '{role} must use a numeric suffix greater than or equal to 1.' },
+    RA_ID_DECLARED_UNUSED: { title: 'Declared but unused ID', text: '{role} is declared but currently unused. This ID can be reused during Renumber IDs.' },
+    RA_ORPHAN_ROLE: { title: 'Role without user', text: '{role} is declared and may be valid, but has no user in Members.' },
+    RA_REQUIRED_PROPERTIES_MISSING: { title: 'Missing required properties', text: '{role} does not contain: {list}.' },
+    RA_ORPHAN_PROPERTY_BLOCK: { title: 'Property block without declared role', text: 'There are properties for {role}, but that ID is not declared. They will be kept until you decide what to do.' },
+    RA_EXACT_PROPERTY_DUPLICATE: { title: 'Exactly duplicated property', text: '{name} repeats the same value and the earlier copy can be removed.' },
+    RA_CONFLICTING_PROPERTY_DUPLICATE: { title: 'Property duplicated with different values', text: '{name} contains {values}. The last value is effective, but you must choose which to keep.', keep: 'Keep “{value}” (line {line})' },
+    RA_INVALID_COLOR: { title: 'Unsupported badge color', text: '“{value}” does not exist. The closest match is “{suggestion}”.', textNoSuggestion: '“{value}” does not exist in the accepted color list.' },
+    RA_COLOR_CASE_NORMALIZATION: { title: 'Uppercase color', text: 'The color “{value}” is valid, but RemoteAdmin consistently uses “{lower}”.' },
+    RA_EMPTY_BADGE: { title: 'Empty badge', text: '{role} will not display badge text.' },
+    RA_INVALID_BOOLEAN: { title: 'Invalid boolean value', text: '{name} must be true, false or default; found “{value}”.' },
+    RA_INVALID_KICK_POWER: { title: 'Invalid kick power', text: '{name} must be default or an integer between 0 and 255; found “{value}”.' },
+    RA_UNKNOWN_PROPERTY: { title: 'Unknown property kept', text: '{name} is not managed by the page and will not be removed or modified.' },
+    RA_PROPERTY_COLON_MISSING: { title: 'Missing “:” in a property', text: 'The line has a known key and an unambiguous value, but the separator is missing.' },
+    RA_PERMISSION_ROLE_MISSING: { title: 'Permission points to a nonexistent ID', text: '{perm} references {role}, which is not declared.' },
+    RA_DUPLICATE_PERMISSION_ROLE: { title: 'Repeated ID in a permission', text: '{perm} repeats one or more IDs; the copies can be removed without changing the permission.' },
+    RA_EMPTY_PERMISSION: { title: 'Permission without assigned IDs', text: '{perm} has an empty list. This may be intentional.' },
+    RA_UNKNOWN_PERMISSION: { title: 'Unknown permission kept', text: '{perm} is not in the current page catalog and will be kept literally.' },
+    RA_EXACT_PERMISSION_DUPLICATE: { title: 'Exactly duplicated permission', text: '{perm} repeats the same list and the earlier copy can be removed.' },
+    RA_CONFLICTING_PERMISSION_DUPLICATE: { title: 'Permission duplicated with different lists', text: '{perm} appears several times with different assignments. You must choose or combine the lists.' },
+    RA_OVERRIDE_ROLE_MISSING: { title: 'Password points to a nonexistent ID', text: 'override_password_role references {role}, which is not declared.' },
+    RA_DUPLICATE_OVERRIDE_ROLE: { title: 'Repeated ID in override_password_role', text: 'The password role list contains exact duplicates that can be removed.' },
+    RA_DUPLICATE_GLOBAL_SETTING: { title: 'Duplicated global setting', text: '{key} appears {count} times. The last value is effective; review which one to keep.' },
+    RA_INVALID_GLOBAL_BOOLEAN: { title: 'Invalid global boolean value', textCase: '{key} uses uppercase; it can be normalized to {value}.', textInvalid: '{key} must be true or false; found “{value}”.' },
+    RA_ID_UNDECLARED_UNUSED: { title: 'Available undeclared ID', text: '{role} is neither declared nor used. It can be used during Renumber IDs.' },
+    RA_ID_RESERVED: { title: 'Reserved ID', text: '{role} is explicitly reserved and will not be used during reorganization.' },
+    RA_INTERNAL_ID_GAPS: { title: 'Gaps in internal numbering', text: '{prefix} skips {list}{more}. You can use “Renumber IDs” with preview.' },
+    RA_TRAILING_WHITESPACE: { title: 'Trailing whitespace', text: 'Trailing spaces add no information and can be removed.' },
+    RA_EXCESS_BLANK_LINE: { title: 'Redundant blank line', text: 'A single blank line will be kept between blocks.' },
+    secProps: 'Properties',
+    secGlobal: 'Global configuration',
+    secFormat: 'Format'
+};
+
 function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
     const source = String(content ?? '');
     const document = parseRemoteAdminDocument(source, { filename: options.filename });
@@ -4914,14 +6327,14 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
     ];
     requiredSections.forEach(([key, label, code]) => {
         if (!document.sections[key]) add({
-            code, severity: 'error', title: `Falta ${label}`,
-            explanation: `No se encontró la sección obligatoria ${label}; las relaciones no pueden validarse de forma segura.`,
+            code, severity: 'error', title: t(`diag.msg.${code}.title`, { label }),
+            explanation: t(`diag.msg.${code}.text`, { label }),
             section: label, affects: ['remoteadmin', 'exiled', 'labapi']
         });
     });
     document.duplicateSections.forEach(section => add({
-        code: 'RA_DUPLICATE_SECTION', severity: 'error', title: 'Sección administrada duplicada',
-        explanation: `La sección ${section.name} aparece más de una vez. Debe elegirse qué contenido conservar.`,
+        code: 'RA_DUPLICATE_SECTION', severity: 'error', title: t('diag.msg.RA_DUPLICATE_SECTION.title'),
+        explanation: t('diag.msg.RA_DUPLICATE_SECTION.text', { section: section.name }),
         section: section.name, line: section.headerIndex + 1, excerpt: lineText(section.headerIndex + 1),
         repairKind: 'confirm', affects: ['remoteadmin', 'exiled', 'labapi']
     }));
@@ -4934,8 +6347,8 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
     if (rolesSection) {
         for (let index = rolesSection.headerIndex + 1; index < rolesSection.endIndex; index++) {
             if (/^\s*-\s*:?[ \t]*$/.test(document.lines[index])) add({
-                code: 'RA_GROUP_NAME_MISSING', severity: 'error', title: 'Grupo sin nombre',
-                explanation: `${document.roleSectionName || 'Roles'} contiene una entrada “-” sin ID interna.`,
+                code: 'RA_GROUP_NAME_MISSING', severity: 'error', title: t('diag.msg.RA_GROUP_NAME_MISSING.title'),
+                explanation: t('diag.msg.RA_GROUP_NAME_MISSING.text', { section: document.roleSectionName || 'Roles' }),
                 section: document.roleSectionName || 'Roles', line: index + 1,
                 excerpt: lineText(index + 1), affects: ['remoteadmin', 'exiled', 'labapi']
             });
@@ -4954,8 +6367,8 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             const line = document.lines[index];
             if (!/^\s*-/.test(line) || parsedLines.has(index) || /^\s*-\s*:?[ \t]*$/.test(line)) continue;
             add({
-                code, severity: 'error', title: `Sintaxis inválida en ${sectionName}`,
-                explanation: 'La línea parece una entrada administrada, pero el parser no puede interpretarla con seguridad.',
+                code, severity: 'error', title: t(`diag.msg.${code}.title`, { section: sectionName }),
+                explanation: t(`diag.msg.${code}.text`, { section: sectionName }),
                 section: sectionName, line: index + 1, excerpt: line, affects: ['remoteadmin', 'exiled', 'labapi']
             });
         }
@@ -4973,14 +6386,14 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
         membersByRole.get(entry.roleName).push(entry);
         if (!validated.valid) add({
             code: validated.provider === 'steam' ? 'RA_INVALID_STEAMID' : 'RA_INVALID_USER_ID',
-            severity: 'error', title: 'Identificador de usuario inválido',
-            explanation: `“${entry.id || '(vacío)'}” no cumple el formato admitido por RemoteAdmin.`,
+            severity: 'error', title: t(`diag.msg.${validated.provider === 'steam' ? 'RA_INVALID_STEAMID' : 'RA_INVALID_USER_ID'}.title`),
+            explanation: t(`diag.msg.${validated.provider === 'steam' ? 'RA_INVALID_STEAMID' : 'RA_INVALID_USER_ID'}.text`, { id: entry.id || t('diag.msg.emptyValue') }),
             section: 'Members', line: entry.lineIndex + 1, roleName: entry.roleName, userId: entry.id,
             excerpt: lineText(entry.lineIndex + 1), affects: ['remoteadmin', 'exiled', 'labapi']
         });
         if (!declaredRoles.has(entry.roleName)) add({
-            code: 'RA_MEMBER_ROLE_MISSING', severity: 'error', title: 'Miembro apunta a una ID inexistente',
-            explanation: `${entry.id} referencia ${entry.roleName}, pero esa ID no está declarada en ${document.roleSectionName || 'Roles'}.`,
+            code: 'RA_MEMBER_ROLE_MISSING', severity: 'error', title: t('diag.msg.RA_MEMBER_ROLE_MISSING.title'),
+            explanation: t('diag.msg.RA_MEMBER_ROLE_MISSING.text', { id: entry.id, role: entry.roleName, section: document.roleSectionName || 'Roles' }),
             section: 'Members', line: entry.lineIndex + 1, roleName: entry.roleName, userId: entry.id,
             excerpt: lineText(entry.lineIndex + 1), repairKind: 'confirm', affects: ['remoteadmin', 'exiled', 'labapi']
         });
@@ -4992,8 +6405,8 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             const line = document.lines[index];
             const repeatedProvider = line.match(/^(\s*-\s*)(\d{17})@steam(?:@steam)+(:\s*[A-Za-z0-9_.-]+\s*)$/i);
             if (repeatedProvider) add({
-                code: 'RA_DUPLICATE_STEAM_PROVIDER', severity: 'warning', title: 'Proveedor @steam repetido',
-                explanation: 'El sufijo @steam está duplicado y puede normalizarse sin cambiar la identidad.',
+                code: 'RA_DUPLICATE_STEAM_PROVIDER', severity: 'warning', title: t('diag.msg.RA_DUPLICATE_STEAM_PROVIDER.title'),
+                explanation: t('diag.msg.RA_DUPLICATE_STEAM_PROVIDER.text'),
                 section: 'Members', line: index + 1, currentValue: line,
                 suggestedValue: `${repeatedProvider[1]}${repeatedProvider[2]}@steam${repeatedProvider[3]}`,
                 excerpt: line, repairKind: 'safe',
@@ -5002,8 +6415,8 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             });
             const missingProvider = line.match(/^(\s*-\s*)(\d{17})(:\s*[A-Za-z0-9_.-]+\s*)$/);
             if (missingProvider && isValidSteamId64(missingProvider[2])) add({
-                code: 'RA_STEAM_PROVIDER_MISSING', severity: 'warning', title: 'Falta el proveedor @steam',
-                explanation: 'La línea contiene un SteamID64 válido, pero falta el sufijo requerido @steam.',
+                code: 'RA_STEAM_PROVIDER_MISSING', severity: 'warning', title: t('diag.msg.RA_STEAM_PROVIDER_MISSING.title'),
+                explanation: t('diag.msg.RA_STEAM_PROVIDER_MISSING.text'),
                 section: 'Members', line: index + 1, currentValue: line,
                 suggestedValue: `${missingProvider[1]}${missingProvider[2]}@steam${missingProvider[3]}`,
                 excerpt: line, repairKind: 'safe',
@@ -5018,8 +6431,8 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
         const signatures = new Set(entries.map(entry => `${entry.id.toLowerCase()}|${entry.roleName}|${entry.rawComment}`));
         if (signatures.size === 1) {
             entries.slice(1).forEach(entry => add({
-                code: 'RA_EXACT_MEMBER_DUPLICATE', severity: 'warning', title: 'Miembro duplicado exactamente',
-                explanation: `El registro ${normalizedId} es idéntico a uno anterior y puede eliminarse con seguridad.`,
+                code: 'RA_EXACT_MEMBER_DUPLICATE', severity: 'warning', title: t('diag.msg.RA_EXACT_MEMBER_DUPLICATE.title'),
+                explanation: t('diag.msg.RA_EXACT_MEMBER_DUPLICATE.text', { id: normalizedId }),
                 section: 'Members', line: entry.lineIndex + 1, roleName: entry.roleName, userId: entry.id,
                 excerpt: lineText(entry.lineIndex + 1), repairKind: 'safe',
                 repairAction: { type: 'removeLines', lineIndexes: [...entry.commentIndexes, entry.lineIndex] },
@@ -5028,11 +6441,12 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
         } else add({
             code: validateRemoteAdminUserId(entries[0].id).provider === 'steam'
                 ? 'RA_DUPLICATE_STEAMID' : 'RA_DUPLICATE_USER_ID',
-            severity: 'error', title: 'Identificador asociado a usuarios distintos',
-            explanation: `${normalizedId} está asociado a ${entries.map(entry => entry.roleName).join(', ')}. Elige explícitamente cuál debe conservarse.`,
+            severity: 'error',
+            title: t(`diag.msg.${validateRemoteAdminUserId(entries[0].id).provider === 'steam' ? 'RA_DUPLICATE_STEAMID' : 'RA_DUPLICATE_USER_ID'}.title`),
+            explanation: t(`diag.msg.${validateRemoteAdminUserId(entries[0].id).provider === 'steam' ? 'RA_DUPLICATE_STEAMID' : 'RA_DUPLICATE_USER_ID'}.text`, { id: normalizedId, roles: entries.map(entry => entry.roleName).join(', ') }),
             section: 'Members', line: entries[0].lineIndex + 1, userId: entries[0].id,
             excerpt: entries.map(entry => lineText(entry.lineIndex + 1)).join('\n'), repairKind: 'confirm',
-            options: entries.map(entry => ({ value: String(entry.lineIndex), label: `Conservar ${entry.roleName} (línea ${entry.lineIndex + 1})` })),
+            options: entries.map(entry => ({ value: String(entry.lineIndex), label: t(`diag.msg.${validateRemoteAdminUserId(entries[0].id).provider === 'steam' ? 'RA_DUPLICATE_STEAMID' : 'RA_DUPLICATE_USER_ID'}.keep`, { role: entry.roleName, line: entry.lineIndex + 1 }) })),
             affects: ['remoteadmin', 'exiled', 'labapi']
         });
     });
@@ -5042,10 +6456,10 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
         add({
             code: numberedRole ? 'RA_DUPLICATE_INTERNAL_ID' : 'RA_SHARED_ROLE',
             severity: numberedRole ? 'error' : 'info',
-            title: numberedRole ? 'ID interna compartida por varios usuarios' : 'Grupo compartido',
+            title: numberedRole ? t('diag.msg.RA_DUPLICATE_INTERNAL_ID.title') : t('diag.msg.RA_SHARED_ROLE.title'),
             explanation: numberedRole
-                ? `${roleName} pertenece a ${entries.length} usuarios. No se puede elegir automáticamente una asociación.`
-                : `${roleName} es un grupo sin numeración compartido por ${entries.length} usuarios; se conservará así.`,
+                ? t('diag.msg.RA_DUPLICATE_INTERNAL_ID.text', { role: roleName, count: entries.length })
+                : t('diag.msg.RA_SHARED_ROLE.text', { role: roleName, count: entries.length }),
             section: 'Members', line: entries[0].lineIndex + 1, roleName,
             excerpt: entries.map(entry => lineText(entry.lineIndex + 1)).join('\n'),
             repairKind: numberedRole ? 'confirm' : 'manual',
@@ -5056,29 +6470,29 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
     roleDeclarationCounts.forEach((count, roleName) => {
         const entries = document.roleEntries.filter(entry => entry.roleName === roleName);
         if (count > 1) add({
-            code: 'RA_DUPLICATE_ROLE_DECLARATION', severity: 'error', title: 'ID interna declarada varias veces',
-            explanation: `${roleName} aparece ${count} veces en ${document.roleSectionName || 'Roles'}.`,
+            code: 'RA_DUPLICATE_ROLE_DECLARATION', severity: 'error', title: t('diag.msg.RA_DUPLICATE_ROLE_DECLARATION.title'),
+            explanation: t('diag.msg.RA_DUPLICATE_ROLE_DECLARATION.text', { role: roleName, count, section: document.roleSectionName || 'Roles' }),
             section: document.roleSectionName || 'Roles', line: entries[0].lineIndex + 1, roleName,
             excerpt: entries.map(entry => lineText(entry.lineIndex + 1)).join('\n'), repairKind: 'confirm',
             affects: ['remoteadmin', 'exiled', 'labapi']
         });
         const split = splitRemoteAdminRoleIdentifier(roleName);
         if (split.numbered && split.number < 1) add({
-            code: 'RA_INVALID_INTERNAL_ID_NUMBER', severity: 'error', title: 'Número de ID interna inválido',
-            explanation: `${roleName} debe utilizar un sufijo numérico mayor o igual que 1.`,
+            code: 'RA_INVALID_INTERNAL_ID_NUMBER', severity: 'error', title: t('diag.msg.RA_INVALID_INTERNAL_ID_NUMBER.title'),
+            explanation: t('diag.msg.RA_INVALID_INTERNAL_ID_NUMBER.text', { role: roleName }),
             section: document.roleSectionName || 'Roles', line: entries[0].lineIndex + 1, roleName,
             excerpt: lineText(entries[0].lineIndex + 1), affects: ['remoteadmin', 'exiled', 'labapi']
         });
         if (!membersByRole.has(roleName)) {
             add({
-                code: 'RA_ID_DECLARED_UNUSED', severity: 'info', title: 'ID declarada pero no utilizada',
-                explanation: `${roleName} está declarada pero actualmente no está siendo utilizada. Esta ID puede reutilizarse durante Reorganizar IDs.`,
+                code: 'RA_ID_DECLARED_UNUSED', severity: 'info', title: t('diag.msg.RA_ID_DECLARED_UNUSED.title'),
+                explanation: t('diag.msg.RA_ID_DECLARED_UNUSED.text', { role: roleName }),
                 section: document.roleSectionName || 'Roles', line: entries[0].lineIndex + 1, roleName,
                 excerpt: lineText(entries[0].lineIndex + 1), repairKind: 'confirm', repairAction: { type: 'openRenumber' }, affects: ['remoteadmin', 'exiled', 'labapi']
             });
             add({
-                code: 'RA_ORPHAN_ROLE', severity: 'warning', title: 'Rol sin usuario',
-                explanation: `${roleName} está declarado y puede ser válido, pero no tiene un usuario en Members.`,
+                code: 'RA_ORPHAN_ROLE', severity: 'warning', title: t('diag.msg.RA_ORPHAN_ROLE.title'),
+                explanation: t('diag.msg.RA_ORPHAN_ROLE.text', { role: roleName }),
                 section: document.roleSectionName || 'Roles', line: entries[0].lineIndex + 1, roleName,
                 excerpt: lineText(entries[0].lineIndex + 1), repairKind: 'confirm', affects: ['remoteadmin', 'exiled', 'labapi']
             });
@@ -5091,15 +6505,15 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
         const properties = document.rolePropertyNodes.get(roleName);
         const missing = requiredProperties.filter(property => !properties?.has(property));
         if (missing.length) add({
-            code: 'RA_REQUIRED_PROPERTIES_MISSING', severity: 'error', title: 'Propiedades obligatorias faltantes',
-            explanation: `${roleName} no contiene: ${missing.join(', ')}.`,
+            code: 'RA_REQUIRED_PROPERTIES_MISSING', severity: 'error', title: t('diag.msg.RA_REQUIRED_PROPERTIES_MISSING.title'),
+            explanation: t('diag.msg.RA_REQUIRED_PROPERTIES_MISSING.text', { role: roleName, list: missing.join(', ') }),
             section: 'Propiedades', roleName, affects: ['remoteadmin']
         });
     });
     document.rolePropertyNodes.forEach((properties, roleName) => {
         if (!declaredRoles.has(roleName)) add({
-            code: 'RA_ORPHAN_PROPERTY_BLOCK', severity: 'warning', title: 'Bloque de propiedades sin rol declarado',
-            explanation: `Hay propiedades para ${roleName}, pero esa ID no está declarada. Se conservarán hasta que decidas qué hacer.`,
+            code: 'RA_ORPHAN_PROPERTY_BLOCK', severity: 'warning', title: t('diag.msg.RA_ORPHAN_PROPERTY_BLOCK.title'),
+            explanation: t('diag.msg.RA_ORPHAN_PROPERTY_BLOCK.text', { role: roleName }),
             section: 'Propiedades', line: [...properties.values()][0]?.[0]?.lineIndex + 1 || 0,
             roleName, repairKind: 'confirm', affects: ['remoteadmin']
         });
@@ -5107,18 +6521,18 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             if (nodes.length > 1) {
                 const values = new Set(nodes.map(node => node.rawValue.trim()));
                 if (values.size === 1) nodes.slice(0, -1).forEach(node => add({
-                    code: 'RA_EXACT_PROPERTY_DUPLICATE', severity: 'warning', title: 'Propiedad duplicada exactamente',
-                    explanation: `${roleName}_${property} repite el mismo valor y la copia anterior puede eliminarse.`,
+                    code: 'RA_EXACT_PROPERTY_DUPLICATE', severity: 'warning', title: t('diag.msg.RA_EXACT_PROPERTY_DUPLICATE.title'),
+                    explanation: t('diag.msg.RA_EXACT_PROPERTY_DUPLICATE.text', { name: `${roleName}_${property}` }),
                     section: 'Propiedades', line: node.lineIndex + 1, roleName, currentValue: node.rawValue.trim(),
                     excerpt: lineText(node.lineIndex + 1), repairKind: 'safe',
                     repairAction: { type: 'removeLines', lineIndexes: [node.lineIndex] }, affects: ['remoteadmin']
                 }));
                 else add({
-                    code: 'RA_CONFLICTING_PROPERTY_DUPLICATE', severity: 'warning', title: 'Propiedad duplicada con valores diferentes',
-                    explanation: `${roleName}_${property} contiene ${[...values].join(' / ')}. El último valor es efectivo, pero debes elegir cuál conservar.`,
+                    code: 'RA_CONFLICTING_PROPERTY_DUPLICATE', severity: 'warning', title: t('diag.msg.RA_CONFLICTING_PROPERTY_DUPLICATE.title'),
+                    explanation: t('diag.msg.RA_CONFLICTING_PROPERTY_DUPLICATE.text', { name: `${roleName}_${property}`, values: [...values].join(' / ') }),
                     section: 'Propiedades', line: nodes[0].lineIndex + 1, roleName,
                     excerpt: nodes.map(node => lineText(node.lineIndex + 1)).join('\n'), repairKind: 'confirm',
-                    options: nodes.map(node => ({ value: String(node.lineIndex), label: `Conservar “${node.rawValue.trim()}” (línea ${node.lineIndex + 1})` })),
+                    options: nodes.map(node => ({ value: String(node.lineIndex), label: t('diag.msg.RA_CONFLICTING_PROPERTY_DUPLICATE.keep', { value: node.rawValue.trim(), line: node.lineIndex + 1 }) })),
                     affects: ['remoteadmin']
                 });
             }
@@ -5127,10 +6541,10 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             if (property === 'color' && !acceptedColors.has(rawValue.toLowerCase())) {
                 const suggestion = findRemoteAdminColorSuggestion(rawValue, acceptedColors);
                 add({
-                    code: 'RA_INVALID_COLOR', severity: 'error', title: 'Color de badge no admitido',
+                    code: 'RA_INVALID_COLOR', severity: 'error', title: t('diag.msg.RA_INVALID_COLOR.title'),
                     explanation: suggestion
-                        ? `“${rawValue}” no existe. La coincidencia más probable es “${suggestion.value}”.`
-                        : `“${rawValue}” no existe en la lista de colores aceptados.`,
+                        ? t('diag.msg.RA_INVALID_COLOR.text', { value: rawValue, suggestion: suggestion.value })
+                        : t('diag.msg.RA_INVALID_COLOR.textNoSuggestion', { value: rawValue }),
                     section: 'Propiedades', line: effectiveNode.lineIndex + 1, roleName,
                     currentValue: rawValue, suggestedValue: suggestion?.value || '',
                     excerpt: lineText(effectiveNode.lineIndex + 1),
@@ -5143,8 +6557,8 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
                 });
             } else if (property === 'color' && rawValue !== rawValue.toLowerCase()) {
                 add({
-                    code: 'RA_COLOR_CASE_NORMALIZATION', severity: 'warning', title: 'Color con mayúsculas',
-                    explanation: `El color “${rawValue}” es válido, pero RemoteAdmin usa “${rawValue.toLowerCase()}” de forma consistente.`,
+                    code: 'RA_COLOR_CASE_NORMALIZATION', severity: 'warning', title: t('diag.msg.RA_COLOR_CASE_NORMALIZATION.title'),
+                    explanation: t('diag.msg.RA_COLOR_CASE_NORMALIZATION.text', { value: rawValue, lower: rawValue.toLowerCase() }),
                     section: 'Propiedades', line: effectiveNode.lineIndex + 1, roleName,
                     currentValue: rawValue, suggestedValue: rawValue.toLowerCase(),
                     excerpt: lineText(effectiveNode.lineIndex + 1), repairKind: 'safe',
@@ -5156,21 +6570,21 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
                 });
             }
             if (property === 'badge' && !rawValue) add({
-                code: 'RA_EMPTY_BADGE', severity: 'warning', title: 'Badge vacío',
-                explanation: `${roleName} no mostrará texto de badge.`, section: 'Propiedades',
+                code: 'RA_EMPTY_BADGE', severity: 'warning', title: t('diag.msg.RA_EMPTY_BADGE.title'),
+                explanation: t('diag.msg.RA_EMPTY_BADGE.text', { role: roleName }), section: 'Propiedades',
                 line: effectiveNode.lineIndex + 1, roleName, excerpt: lineText(effectiveNode.lineIndex + 1),
                 affects: ['remoteadmin']
             });
             if (['cover', 'hidden'].includes(property) && !/^(?:true|false|default)$/i.test(rawValue)) add({
-                code: 'RA_INVALID_BOOLEAN', severity: 'error', title: 'Valor booleano inválido',
-                explanation: `${roleName}_${property} debe ser true, false o default; se encontró “${rawValue}”.`,
+                code: 'RA_INVALID_BOOLEAN', severity: 'error', title: t('diag.msg.RA_INVALID_BOOLEAN.title'),
+                explanation: t('diag.msg.RA_INVALID_BOOLEAN.text', { name: `${roleName}_${property}`, value: rawValue }),
                 section: 'Propiedades', line: effectiveNode.lineIndex + 1, roleName,
                 excerpt: lineText(effectiveNode.lineIndex + 1), affects: ['remoteadmin']
             });
             if (['kick_power', 'required_kick_power'].includes(property)
                 && !(/^(?:default)$/i.test(rawValue) || /^\d+$/.test(rawValue) && Number(rawValue) <= 255)) add({
-                code: 'RA_INVALID_KICK_POWER', severity: 'error', title: 'Poder de expulsión inválido',
-                explanation: `${roleName}_${property} debe ser default o un entero entre 0 y 255; se encontró “${rawValue}”.`,
+                code: 'RA_INVALID_KICK_POWER', severity: 'error', title: t('diag.msg.RA_INVALID_KICK_POWER.title'),
+                explanation: t('diag.msg.RA_INVALID_KICK_POWER.text', { name: `${roleName}_${property}`, value: rawValue }),
                 section: 'Propiedades', line: effectiveNode.lineIndex + 1, roleName,
                 excerpt: lineText(effectiveNode.lineIndex + 1), affects: ['remoteadmin']
             });
@@ -5180,17 +6594,17 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
     document.lines.forEach((line, index) => {
         const unknownProperty = matchDeclaredRemoteAdminRoleProperty(line, declaredRoles);
         if (unknownProperty && !MEMBER_PROPERTY_NAMES.has(unknownProperty.property)) add({
-            code: 'RA_UNKNOWN_PROPERTY', severity: 'warning', title: 'Propiedad desconocida conservada',
-            explanation: `${unknownProperty.roleName}_${unknownProperty.property} no es administrada por la página y no será eliminada ni modificada.`,
-            section: 'Propiedades', line: index + 1, roleName: unknownProperty.roleName, excerpt: line, affects: ['remoteadmin']
+            code: 'RA_UNKNOWN_PROPERTY', severity: 'warning', title: t('diag.msg.RA_UNKNOWN_PROPERTY.title'),
+            explanation: t('diag.msg.RA_UNKNOWN_PROPERTY.text', { name: `${unknownProperty.roleName}_${unknownProperty.property}` }),
+            section: t('diag.secProps'), line: index + 1, roleName: unknownProperty.roleName, excerpt: line, affects: ['remoteadmin']
         });
         const missingColon = line.match(/^([A-Za-z0-9_.-]+)_(badge|color|cover|hidden|kick_power|required_kick_power)(\s+)(.+)$/);
         if (missingColon && declaredRoles.has(missingColon[1])) {
             const replacement = `${missingColon[1]}_${missingColon[2]}: ${missingColon[4].trim()}`;
             add({
-                code: 'RA_PROPERTY_COLON_MISSING', severity: 'error', title: 'Falta “:” en una propiedad',
-                explanation: 'La línea tiene una clave conocida y un valor inequívoco, pero falta el separador.',
-                section: 'Propiedades', line: index + 1, roleName: missingColon[1], currentValue: line,
+                code: 'RA_PROPERTY_COLON_MISSING', severity: 'error', title: t('diag.msg.RA_PROPERTY_COLON_MISSING.title'),
+                explanation: t('diag.msg.RA_PROPERTY_COLON_MISSING.text'),
+                section: t('diag.secProps'), line: index + 1, roleName: missingColon[1], currentValue: line,
                 suggestedValue: replacement, excerpt: line, repairKind: 'safe',
                 repairAction: { type: 'replaceLine', lineIndex: index, value: replacement }, affects: ['remoteadmin']
             });
@@ -5207,15 +6621,15 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             if (!seen.has(roleName)) deduped.push(roleName);
             seen.add(roleName);
             if (!declaredRoles.has(roleName)) add({
-                code: 'RA_PERMISSION_ROLE_MISSING', severity: 'error', title: 'Permiso apunta a una ID inexistente',
-                explanation: `${entry.permission} referencia ${roleName}, que no está declarada.`,
+                code: 'RA_PERMISSION_ROLE_MISSING', severity: 'error', title: t('diag.msg.RA_PERMISSION_ROLE_MISSING.title'),
+                explanation: t('diag.msg.RA_PERMISSION_ROLE_MISSING.text', { perm: entry.permission, role: roleName }),
                 section: 'Permissions', line: entry.lineIndex + 1, roleName,
                 excerpt: lineText(entry.lineIndex + 1), repairKind: 'confirm', affects: ['remoteadmin', 'exiled', 'labapi']
             });
         });
         if (deduped.length !== entry.roles.length) add({
-            code: 'RA_DUPLICATE_PERMISSION_ROLE', severity: 'warning', title: 'ID repetida en un permiso',
-            explanation: `${entry.permission} repite una o más IDs; se pueden quitar las copias sin cambiar el permiso.`,
+            code: 'RA_DUPLICATE_PERMISSION_ROLE', severity: 'warning', title: t('diag.msg.RA_DUPLICATE_PERMISSION_ROLE.title'),
+            explanation: t('diag.msg.RA_DUPLICATE_PERMISSION_ROLE.text', { perm: entry.permission }),
             section: 'Permissions', line: entry.lineIndex + 1, excerpt: lineText(entry.lineIndex + 1), repairKind: 'safe',
             repairAction: {
                 type: 'replaceLine', lineIndex: entry.lineIndex,
@@ -5223,13 +6637,13 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             }, affects: ['remoteadmin', 'exiled', 'labapi']
         });
         if (entry.roles.length === 0) add({
-            code: 'RA_EMPTY_PERMISSION', severity: 'warning', title: 'Permiso sin IDs asignadas',
-            explanation: `${entry.permission} tiene una lista vacía. Esto puede ser intencional.`,
+            code: 'RA_EMPTY_PERMISSION', severity: 'warning', title: t('diag.msg.RA_EMPTY_PERMISSION.title'),
+            explanation: t('diag.msg.RA_EMPTY_PERMISSION.text', { perm: entry.permission }),
             section: 'Permissions', line: entry.lineIndex + 1, excerpt: lineText(entry.lineIndex + 1), affects: ['remoteadmin', 'exiled', 'labapi']
         });
         if (!DEFAULT_PERMISSION_LIST.includes(entry.permission)) add({
-            code: 'RA_UNKNOWN_PERMISSION', severity: 'warning', title: 'Permiso desconocido conservado',
-            explanation: `${entry.permission} no está en el catálogo actual de la página y se conservará literalmente.`,
+            code: 'RA_UNKNOWN_PERMISSION', severity: 'warning', title: t('diag.msg.RA_UNKNOWN_PERMISSION.title'),
+            explanation: t('diag.msg.RA_UNKNOWN_PERMISSION.text', { perm: entry.permission }),
             section: 'Permissions', line: entry.lineIndex + 1, excerpt: lineText(entry.lineIndex + 1), affects: ['remoteadmin']
         });
     });
@@ -5237,15 +6651,15 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
         if (entries.length < 2) return;
         const signatures = new Set(entries.map(entry => entry.roles.join(',')));
         if (signatures.size === 1) entries.slice(0, -1).forEach(entry => add({
-            code: 'RA_EXACT_PERMISSION_DUPLICATE', severity: 'warning', title: 'Permiso duplicado exactamente',
-            explanation: `${permission} repite la misma lista y la copia anterior puede eliminarse.`,
+            code: 'RA_EXACT_PERMISSION_DUPLICATE', severity: 'warning', title: t('diag.msg.RA_EXACT_PERMISSION_DUPLICATE.title'),
+            explanation: t('diag.msg.RA_EXACT_PERMISSION_DUPLICATE.text', { perm: permission }),
             section: 'Permissions', line: entry.lineIndex + 1, excerpt: lineText(entry.lineIndex + 1),
             repairKind: 'safe', repairAction: { type: 'removeLines', lineIndexes: [...entry.commentIndexes, entry.lineIndex] },
             affects: ['remoteadmin', 'exiled', 'labapi']
         }));
         else add({
-            code: 'RA_CONFLICTING_PERMISSION_DUPLICATE', severity: 'warning', title: 'Permiso duplicado con listas diferentes',
-            explanation: `${permission} aparece varias veces con asignaciones diferentes. Debes elegir o combinar las listas.`,
+            code: 'RA_CONFLICTING_PERMISSION_DUPLICATE', severity: 'warning', title: t('diag.msg.RA_CONFLICTING_PERMISSION_DUPLICATE.title'),
+            explanation: t('diag.msg.RA_CONFLICTING_PERMISSION_DUPLICATE.text', { perm: permission }),
             section: 'Permissions', line: entries[0].lineIndex + 1,
             excerpt: entries.map(entry => lineText(entry.lineIndex + 1)).join('\n'), repairKind: 'confirm',
             affects: ['remoteadmin', 'exiled', 'labapi']
@@ -5259,16 +6673,16 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
         const uniqueRoles = [...new Set(roles)];
         roles.forEach(roleName => {
             if (!declaredRoles.has(roleName)) add({
-                code: 'RA_OVERRIDE_ROLE_MISSING', severity: 'error', title: 'Contraseña apunta a una ID inexistente',
-                explanation: `override_password_role referencia ${roleName}, que no está declarada.`,
-                section: 'Configuración global', line: index + 1, roleName,
+                code: 'RA_OVERRIDE_ROLE_MISSING', severity: 'error', title: t('diag.msg.RA_OVERRIDE_ROLE_MISSING.title'),
+                explanation: t('diag.msg.RA_OVERRIDE_ROLE_MISSING.text', { role: roleName }),
+                section: t('diag.secGlobal'), line: index + 1, roleName,
                 excerpt: line, repairKind: 'confirm', affects: ['remoteadmin']
             });
         });
         if (uniqueRoles.length !== roles.length) add({
-            code: 'RA_DUPLICATE_OVERRIDE_ROLE', severity: 'warning', title: 'ID repetida en override_password_role',
-            explanation: 'La lista de roles de contraseña contiene duplicados exactos que pueden eliminarse.',
-            section: 'Configuración global', line: index + 1, excerpt: line, repairKind: 'safe',
+            code: 'RA_DUPLICATE_OVERRIDE_ROLE', severity: 'warning', title: t('diag.msg.RA_DUPLICATE_OVERRIDE_ROLE.title'),
+            explanation: t('diag.msg.RA_DUPLICATE_OVERRIDE_ROLE.text'),
+            section: t('diag.secGlobal'), line: index + 1, excerpt: line, repairKind: 'safe',
             repairAction: { type: 'replaceLine', lineIndex: index, value: `${override[1]}${override[2]}${uniqueRoles.join(', ')}` },
             affects: ['remoteadmin']
         });
@@ -5286,9 +6700,9 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             if (match) entries.push({ lineIndex: index, separator: match[1], value: match[2].trim() });
         });
         if (entries.length > 1) add({
-            code: 'RA_DUPLICATE_GLOBAL_SETTING', severity: 'warning', title: 'Configuración global duplicada',
-            explanation: `${key} aparece ${entries.length} veces. El último valor es efectivo; revisa cuál debe conservarse.`,
-            section: 'Configuración global', line: entries[0].lineIndex + 1,
+            code: 'RA_DUPLICATE_GLOBAL_SETTING', severity: 'warning', title: t('diag.msg.RA_DUPLICATE_GLOBAL_SETTING.title'),
+            explanation: t('diag.msg.RA_DUPLICATE_GLOBAL_SETTING.text', { key, count: entries.length }),
+            section: t('diag.secGlobal'), line: entries[0].lineIndex + 1,
             excerpt: entries.map(entry => lineText(entry.lineIndex + 1)).join('\n'), repairKind: 'confirm', affects: ['remoteadmin']
         });
         entries.forEach(entry => {
@@ -5297,11 +6711,11 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             const caseOnly = /^(?:true|false)$/.test(lower);
             add({
                 code: 'RA_INVALID_GLOBAL_BOOLEAN', severity: caseOnly ? 'warning' : 'error',
-                title: 'Valor global booleano inválido',
+                title: t('diag.msg.RA_INVALID_GLOBAL_BOOLEAN.title'),
                 explanation: caseOnly
-                    ? `${key} utiliza mayúsculas; puede normalizarse a ${lower}.`
-                    : `${key} debe ser true o false; se encontró “${entry.value}”.`,
-                section: 'Configuración global', line: entry.lineIndex + 1,
+                    ? t('diag.msg.RA_INVALID_GLOBAL_BOOLEAN.textCase', { key, value: lower })
+                    : t('diag.msg.RA_INVALID_GLOBAL_BOOLEAN.textInvalid', { key, value: entry.value }),
+                section: t('diag.secGlobal'), line: entry.lineIndex + 1,
                 currentValue: entry.value, suggestedValue: caseOnly ? lower : '',
                 excerpt: lineText(entry.lineIndex + 1), repairKind: caseOnly ? 'safe' : 'manual',
                 repairAction: caseOnly ? {
@@ -5317,15 +6731,15 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
     idClassification.roles.forEach(item => {
         if (item.state === 'UNDECLARED_UNUSED') {
             add({
-                code: 'RA_ID_UNDECLARED_UNUSED', severity: 'info', title: 'ID disponible no declarada',
-                explanation: `${item.roleName} no está declarada ni utilizada. Puede utilizarse durante Reorganizar IDs.`,
+                code: 'RA_ID_UNDECLARED_UNUSED', severity: 'info', title: t('diag.msg.RA_ID_UNDECLARED_UNUSED.title'),
+                explanation: t('diag.msg.RA_ID_UNDECLARED_UNUSED.text', { role: item.roleName }),
                 section: document.roleSectionName || 'Roles', roleName: item.roleName,
                 repairKind: 'confirm', repairAction: { type: 'openRenumber' }, affects: ['remoteadmin', 'exiled', 'labapi']
             });
         } else if (item.state === 'RESERVED') {
             add({
-                code: 'RA_ID_RESERVED', severity: 'info', title: 'ID reservada',
-                explanation: `${item.roleName} está reservada explícitamente y no será utilizada durante la reorganización.`,
+                code: 'RA_ID_RESERVED', severity: 'info', title: t('diag.msg.RA_ID_RESERVED.title'),
+                explanation: t('diag.msg.RA_ID_RESERVED.text', { role: item.roleName }),
                 section: document.roleSectionName || 'Roles', roleName: item.roleName,
                 repairKind: 'manual', affects: ['remoteadmin', 'exiled', 'labapi']
             });
@@ -5346,8 +6760,8 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
             if (!sorted.includes(number)) missing.push(number);
         }
         if (missing.length) add({
-            code: 'RA_INTERNAL_ID_GAPS', severity: 'info', title: 'Saltos en la numeración interna',
-            explanation: `${prefix} omite ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? '…' : ''}. Puedes usar “Reorganizar IDs” con previsualización.`,
+            code: 'RA_INTERNAL_ID_GAPS', severity: 'info', title: t('diag.msg.RA_INTERNAL_ID_GAPS.title'),
+            explanation: t('diag.msg.RA_INTERNAL_ID_GAPS.text', { prefix, list: missing.slice(0, 12).join(', '), more: missing.length > 12 ? '…' : '' }),
             section: document.roleSectionName || 'Roles', roleName: prefix,
             repairKind: 'confirm', repairAction: { type: 'openRenumber' }, affects: ['remoteadmin', 'exiled', 'labapi']
         });
@@ -5355,15 +6769,15 @@ function runRemoteAdminDiagnostics(content, state = parsedData, options = {}) {
 
     document.lines.forEach((line, index) => {
         if (/[ \t]+$/.test(line)) add({
-            code: 'RA_TRAILING_WHITESPACE', severity: 'info', title: 'Espacios al final de línea',
-            explanation: 'Los espacios finales no aportan información y pueden eliminarse.',
-            section: 'Formato', line: index + 1, excerpt: line, repairKind: 'safe',
+            code: 'RA_TRAILING_WHITESPACE', severity: 'info', title: t('diag.msg.RA_TRAILING_WHITESPACE.title'),
+            explanation: t('diag.msg.RA_TRAILING_WHITESPACE.text'),
+            section: t('diag.secFormat'), line: index + 1, excerpt: line, repairKind: 'safe',
             repairAction: { type: 'replaceLine', lineIndex: index, value: line.replace(/[ \t]+$/g, '') }, affects: ['remoteadmin']
         });
         if (index > 0 && line === '' && document.lines[index - 1] === '') add({
-            code: 'RA_EXCESS_BLANK_LINE', severity: 'info', title: 'Línea vacía redundante',
-            explanation: 'Se conservará una sola línea vacía entre bloques.',
-            section: 'Formato', line: index + 1, repairKind: 'safe',
+            code: 'RA_EXCESS_BLANK_LINE', severity: 'info', title: t('diag.msg.RA_EXCESS_BLANK_LINE.title'),
+            explanation: t('diag.msg.RA_EXCESS_BLANK_LINE.text'),
+            section: t('diag.secFormat'), line: index + 1, repairKind: 'safe',
             repairAction: { type: 'removeLines', lineIndexes: [index] }, affects: ['remoteadmin']
         });
     });
@@ -5466,8 +6880,8 @@ function applyRemoteAdminRepairs(content, diagnosticResult, selectedIds = null, 
         original: source, content: source, changed: false, applied: [], skipped: selected,
         diagnostics: analysis, rolledBack: true,
         rollbackReason: !sectionsReadable
-            ? 'El parser no recuperó todas las secciones requeridas.'
-            : !preserved ? 'La comparación semántica detectó pérdida de datos.' : 'La reparación no resolvió el diagnóstico seleccionado.'
+            ? t('repair.rollbackParser')
+            : !preserved ? t('repair.rollbackData') : t('repair.rollbackNoChange')
     };
     return {
         original: source, content: repaired, changed: repaired !== source,
@@ -5489,22 +6903,22 @@ function updateRemoteAdminHealth(result = activeRemoteAdminDiagnostics) {
     remoteAdminHealth.classList.remove('is-pending', 'is-valid', 'has-warnings', 'has-errors');
     if (!result || currentMode !== 'ra' || !hasLoadedRemoteAdmin) {
         remoteAdminHealth.classList.add('is-pending');
-        remoteAdminHealth.textContent = 'Sin validar';
+        remoteAdminHealth.textContent = t('health.pending');
         return;
     }
     if (result.counts.error > 0) {
         remoteAdminHealth.classList.add('has-errors');
-        remoteAdminHealth.textContent = `${result.counts.error} error(es)`;
+        remoteAdminHealth.textContent = t('health.errors', { count: result.counts.error });
     } else if (result.counts.warning > 0) {
         remoteAdminHealth.classList.add('has-warnings');
-        remoteAdminHealth.textContent = `${result.counts.warning} advertencia(s)`;
+        remoteAdminHealth.textContent = t('health.warnings', { count: result.counts.warning });
     } else {
         remoteAdminHealth.classList.add('is-valid');
-        remoteAdminHealth.textContent = 'RemoteAdmin válido';
+        remoteAdminHealth.textContent = t('health.valid');
     }
     const critical = result.counts.error;
     btnGenerate.title = critical > 0
-        ? `${critical} error(es) crítico(s) bloquean la descarga hasta resolverlos.`
+        ? t('healthExtra.blockDownload', { count: critical })
         : '';
 }
 
@@ -5591,7 +7005,7 @@ function repairRemoteAdminSafeIssues(selectedIds = null) {
         if (selectedIds && pass > 0) break;
         result = applyRemoteAdminRepairs(content, analysis, ids, { state: parsedData });
         if (result.rolledBack) {
-            alert(`La reparación fue revertida: ${result.rollbackReason}`);
+            alert(t('repair.rolledBack', { reason: result.rollbackReason }));
             return result;
         }
         if (!result.changed) break;
@@ -5599,7 +7013,7 @@ function repairRemoteAdminSafeIssues(selectedIds = null) {
         applied.push(...result.applied);
     }
     if (content === original) {
-        if (selectedIds?.length) alert('Las selecciones no contienen reparaciones automáticas seguras.');
+        if (selectedIds?.length) alert(t('repair.noSafeSelection'));
         return result;
     }
     commitRemoteAdminRepair(
@@ -5608,12 +7022,12 @@ function repairRemoteAdminSafeIssues(selectedIds = null) {
         `Reparación segura de ${applied.length} diagnóstico(s)`
     );
     if (exportModal?.classList.contains('active')) renderRemoteAdminExportPreview(false, false);
-    alert(`Se aplicaron ${applied.length} reparación(es) seguras. El archivo fue analizado nuevamente.`);
+    alert(t('repair.appliedSafe', { count: applied.length }));
     return { ...result, applied, content };
 }
 
 function applyRemoteAdminExplicitLineRepair(issue) {
-    if (!issue?.repairAction || !confirm(`¿Aplicar la corrección propuesta para ${issue.code}?`)) return false;
+    if (!issue?.repairAction || !confirm(t('repair.applyFixConfirm', { code: issue.code }))) return false;
     const content = activeRemoteAdminDiagnostics?.content || getCurrentRemoteAdminDiagnosticContent();
     const explicitIssue = { ...issue, repairKind: 'safe' };
     const analysis = {
@@ -5623,7 +7037,7 @@ function applyRemoteAdminExplicitLineRepair(issue) {
     };
     const result = applyRemoteAdminRepairs(content, analysis, [explicitIssue.id], { state: parsedData });
     if (!result.changed || result.rolledBack) {
-        alert(`No se pudo aplicar: ${result.rollbackReason || 'la corrección no produjo un resultado verificable.'}`);
+        alert(t('repair.cannotApplyFix', { reason: result.rollbackReason || t('repair.cannotApplyDefault') }));
         return false;
     }
     commitRemoteAdminRepair(content, result.content, `Resolución confirmada de ${issue.code}`);
@@ -5638,7 +7052,7 @@ function applyRemoteAdminChoiceRepair(issue) {
             validateRemoteAdminUserId(entry.id).normalized === validateRemoteAdminUserId(issue.userId).normalized
         );
         const answer = prompt(
-            `Escribe la línea que deseas conservar:\n${candidates.map(entry => `${entry.lineIndex + 1}: ${entry.id} → ${entry.roleName}`).join('\n')}`,
+            t('choice.keepLine', { list: candidates.map(entry => `${entry.lineIndex + 1}: ${entry.id} → ${entry.roleName}`).join('\n') }),
             String(candidates[0]?.lineIndex + 1 || '')
         );
         const keepLineIndex = Number(answer) - 1;
@@ -5646,12 +7060,12 @@ function applyRemoteAdminChoiceRepair(issue) {
         const remove = new Set(candidates
             .filter(entry => entry.lineIndex !== keepLineIndex)
             .flatMap(entry => [...entry.commentIndexes, entry.lineIndex]));
-        if (!confirm(`Se eliminarán ${candidates.length - 1} asociación(es) conflictivas y se conservará la línea ${keepLineIndex + 1}. ¿Continuar?`)) return false;
+        if (!confirm(t('choice.removeConflicts', { count: candidates.length - 1, line: keepLineIndex + 1 }))) return false;
         const lines = document.lines.filter((_, index) => !remove.has(index));
         const output = `${document.hasBom ? '\uFEFF' : ''}${lines.join(document.lineEnding)}`;
         const reread = runRemoteAdminDiagnostics(output, parsedData);
         if (!reread.document.sections.members || !reread.document.sections.roles || !reread.document.sections.permissions) {
-            alert('La resolución fue revertida porque el parser no pudo recuperar el archivo completo.');
+            alert(t('repair.parserLost'));
             return false;
         }
         return commitRemoteAdminRepair(content, output, `Resolución de ${issue.code}`);
@@ -5669,12 +7083,12 @@ function applyRemoteAdminChoiceRepair(issue) {
         if (!property) return false;
         const [propertyName, nodes] = property;
         const answer = prompt(
-            `Escribe la línea cuyo valor deseas conservar:\n${nodes.map(node => `${node.lineIndex + 1}: ${node.rawValue.trim()}`).join('\n')}`,
+            t('choice.keepValue', { list: nodes.map(node => `${node.lineIndex + 1}: ${node.rawValue.trim()}`).join('\n') }),
             String(nodes.at(-1).lineIndex + 1)
         );
         const keepLineIndex = Number(answer) - 1;
         if (!nodes.some(node => node.lineIndex === keepLineIndex)) return false;
-        if (!confirm(`Se conservará una sola declaración de ${issue.roleName}_${propertyName}. ¿Continuar?`)) return false;
+        if (!confirm(t('choice.keepSingle', { name: `${issue.roleName}_${propertyName}` }))) return false;
         const remove = new Set(nodes.filter(node => node.lineIndex !== keepLineIndex).map(node => node.lineIndex));
         const output = `${document.hasBom ? '\uFEFF' : ''}${document.lines.filter((_, index) => !remove.has(index)).join(document.lineEnding)}`;
         return commitRemoteAdminRepair(content, output, `Resolución de propiedad duplicada ${issue.roleName}_${propertyName}`);
@@ -5686,15 +7100,15 @@ function applyRemoteAdminChoiceRepair(issue) {
         const candidates = document.permissionEntries.filter(entry => entry.permission === permissionName);
         if (!permissionName || candidates.length < 2) return false;
         const answer = prompt(
-            `Escribe “combinar” para unir las IDs o la línea que deseas conservar:\n${candidates.map(entry => `${entry.lineIndex + 1}: [${entry.roles.join(', ')}]`).join('\n')}`,
-            'combinar'
+            t('choice.combinePrompt', { list: candidates.map(entry => `${entry.lineIndex + 1}: [${entry.roles.join(', ')}]`).join('\n') }),
+            t('choice.combineDefault')
         );
-        const combine = String(answer || '').trim().toLowerCase() === 'combinar';
+        const combine = ['combinar', 'combine'].includes(String(answer || '').trim().toLowerCase());
         const keepLineIndex = combine ? candidates.at(-1).lineIndex : Number(answer) - 1;
         if (!candidates.some(entry => entry.lineIndex === keepLineIndex)) return false;
         if (!confirm(combine
-            ? `Se combinarán las asignaciones duplicadas de ${permissionName}. ¿Continuar?`
-            : `Se conservará solamente la declaración de la línea ${keepLineIndex + 1}. ¿Continuar?`)) return false;
+            ? t('choice.combineConfirm', { name: permissionName })
+            : t('choice.keepOneConfirm', { line: keepLineIndex + 1 }))) return false;
         const lines = [...document.lines];
         if (combine) {
             const roles = [...new Set(candidates.flatMap(entry => entry.roles))];
@@ -5710,12 +7124,12 @@ function applyRemoteAdminChoiceRepair(issue) {
     if (issue.code === 'RA_DUPLICATE_ROLE_DECLARATION') {
         const candidates = document.roleEntries.filter(entry => entry.roleName === issue.roleName);
         const answer = prompt(
-            `Escribe la línea de ${issue.roleName} que deseas conservar:\n${candidates.map(entry => String(entry.lineIndex + 1)).join(', ')}`,
+            t('choice.keepRole', { role: issue.roleName, list: candidates.map(entry => String(entry.lineIndex + 1)).join(', ') }),
             String(candidates[0]?.lineIndex + 1 || '')
         );
         const keepLineIndex = Number(answer) - 1;
         if (!candidates.some(entry => entry.lineIndex === keepLineIndex)) return false;
-        if (!confirm(`Se eliminarán ${candidates.length - 1} declaraciones duplicadas de ${issue.roleName}. ¿Continuar?`)) return false;
+        if (!confirm(t('choice.removeRoles', { count: candidates.length - 1, role: issue.roleName }))) return false;
         const remove = new Set(candidates.filter(entry => entry.lineIndex !== keepLineIndex).map(entry => entry.lineIndex));
         const output = `${document.hasBom ? '\uFEFF' : ''}${document.lines.filter((_, index) => !remove.has(index)).join(document.lineEnding)}`;
         return commitRemoteAdminRepair(content, output, `Resolución de ID duplicada ${issue.roleName}`);
@@ -5727,7 +7141,7 @@ function applyRemoteAdminChoiceRepair(issue) {
         return true;
     }
     if (issue.repairAction) return applyRemoteAdminExplicitLineRepair(issue);
-    alert('Este problema requiere editar el valor o elegir una relación válida; no se aplicó ningún cambio automático.');
+    alert(t('repair.manualRequired'));
     goToRemoteAdminDiagnostic(issue);
     return false;
 }
@@ -5747,7 +7161,7 @@ function resolveSelectedRemoteAdminDiagnostics(selectedIds = selectedRemoteAdmin
     const ids = new Set(selectedIds || []);
     const selected = (result?.diagnostics || []).filter(issue => ids.has(issue.id));
     if (!selected.length) {
-        alert('Selecciona al menos un problema antes de continuar.');
+        alert(t('repair.selectOne'));
         return { repaired: 0, decisions: 0, manual: 0 };
     }
 
@@ -5777,8 +7191,10 @@ function resolveSelectedRemoteAdminDiagnostics(selectedIds = selectedRemoteAdmin
     }
     if (unresolved.length > 0) {
         alert(
-            `${unresolved.length} problema(s) seleccionado(s) requieren edición manual y no fueron modificados:\n`
-            + unresolved.slice(0, 8).map(issue => `• ${issue.code}${issue.line ? ` (línea ${issue.line})` : ''}`).join('\n')
+            t('repair.unresolvedManual', {
+                count: unresolved.length,
+                list: unresolved.slice(0, 8).map(issue => `• ${issue.code}${issue.line ? t('repair.unresolvedLine', { line: issue.line }) : ''}`).join('\n')
+            })
         );
     }
     return { repaired, decisions, manual: unresolved.length };
@@ -5800,14 +7216,16 @@ function renderRemoteAdminDiagnostics() {
     const result = activeRemoteAdminDiagnostics;
     if (!result || !diagnosticsList) return;
     diagnosticsCounts?.replaceChildren();
-    appendRemoteAdminDiagnosticCount('Errores críticos', result.counts.error, 'error');
-    appendRemoteAdminDiagnosticCount('Advertencias', result.counts.warning, 'warning');
-    appendRemoteAdminDiagnosticCount('Información', result.counts.info, 'info');
-    appendRemoteAdminDiagnosticCount('Reparables', result.counts.safe, 'safe');
-    appendRemoteAdminDiagnosticCount('Requieren decisión', result.counts.confirm, 'confirm');
+    appendRemoteAdminDiagnosticCount(t('diag.countErrors'), result.counts.error, 'error');
+    appendRemoteAdminDiagnosticCount(t('diag.countWarnings'), result.counts.warning, 'warning');
+    appendRemoteAdminDiagnosticCount(t('diag.countInfo'), result.counts.info, 'info');
+    appendRemoteAdminDiagnosticCount(t('diag.countRepairable'), result.counts.safe, 'safe');
+    appendRemoteAdminDiagnosticCount(t('diag.countDecisions'), result.counts.confirm, 'confirm');
     if (diagnosticsSummary) {
-        diagnosticsSummary.textContent = `${result.stats.users} usuario(s), ${result.stats.roles} ID(s) interna(s), `
-            + `${result.stats.permissions} permiso(s). ${result.valid ? 'Sin errores críticos.' : 'La exportación permanece bloqueada por errores críticos.'}`;
+        diagnosticsSummary.textContent = t('diag.summary', {
+            users: result.stats.users, roles: result.stats.roles, perms: result.stats.permissions,
+            tail: result.valid ? t('diag.summaryOk') : t('diag.summaryBlocked')
+        });
     }
     const visible = getVisibleRemoteAdminDiagnostics(result);
     diagnosticsList.replaceChildren();
@@ -5815,8 +7233,8 @@ function renderRemoteAdminDiagnostics() {
         const empty = document.createElement('div');
         empty.className = 'diagnostics-empty';
         empty.textContent = result.diagnostics.length
-            ? 'Ningún diagnóstico coincide con el filtro.'
-            : 'RemoteAdmin analizado correctamente. No se encontraron problemas.';
+            ? t('diag.emptyFiltered')
+            : t('diag.emptyClean');
         diagnosticsList.appendChild(empty);
     }
     visible.forEach(issue => {
@@ -5830,17 +7248,17 @@ function renderRemoteAdminDiagnostics() {
         selector.checked = selectedRemoteAdminDiagnosticIds.has(issue.id);
         selector.disabled = false;
         selector.title = issue.repairKind === 'manual'
-            ? 'Puedes seleccionarlo para incluirlo en el resumen; requerirá edición manual.'
+            ? t('diag.selManual')
             : issue.repairKind === 'confirm'
-                ? 'Al resolver la selección se solicitará una decisión antes de modificarlo.'
-                : 'Este problema admite una reparación automática segura.';
-        selector.setAttribute('aria-label', `Seleccionar ${issue.code}`);
+                ? t('diag.selConfirm')
+                : t('diag.selSafe');
+        selector.setAttribute('aria-label', t('diag.selAria', { code: issue.code }));
         selector.addEventListener('change', () => {
             if (selector.checked) selectedRemoteAdminDiagnosticIds.add(issue.id);
             else selectedRemoteAdminDiagnosticIds.delete(issue.id);
             if (btnResolveSelected) {
                 btnResolveSelected.disabled = selectedRemoteAdminDiagnosticIds.size === 0;
-                btnResolveSelected.textContent = `Resolver seleccionados (${selectedRemoteAdminDiagnosticIds.size})`;
+                btnResolveSelected.textContent = t('diag.resolveSelectedN', { n: selectedRemoteAdminDiagnosticIds.size });
             }
             if (btnClearDiagnosticSelection) btnClearDiagnosticSelection.disabled = selectedRemoteAdminDiagnosticIds.size === 0;
         });
@@ -5848,9 +7266,9 @@ function renderRemoteAdminDiagnostics() {
         const code = document.createElement('div');
         code.className = 'diagnostic-code';
         const repairLabel = issue.repairKind === 'safe'
-            ? 'Reparación segura'
-            : issue.repairKind === 'confirm' ? 'Requiere decisión' : 'Edición manual';
-        code.textContent = `${issue.code} · ${issue.severity === 'error' ? 'Error crítico' : issue.severity === 'warning' ? 'Advertencia' : 'Información'} · ${repairLabel}`;
+            ? t('diag.repairSafe')
+            : issue.repairKind === 'confirm' ? t('diag.repairConfirm') : t('diag.repairManual');
+        code.textContent = `${issue.code} · ${issue.severity === 'error' ? t('diag.sevError') : issue.severity === 'warning' ? t('diag.sevWarning') : t('diag.sevInfo')} · ${repairLabel}`;
         const title = document.createElement('h3');
         title.className = 'diagnostic-title';
         title.textContent = issue.title;
@@ -5859,7 +7277,7 @@ function renderRemoteAdminDiagnostics() {
         explanation.textContent = issue.explanation;
         const location = document.createElement('div');
         location.className = 'diagnostic-location';
-        location.textContent = `${issue.section}${issue.line ? ` · línea ${issue.line}` : ''}${issue.roleName ? ` · ID ${issue.roleName}` : ''} · Afecta: ${issue.affects.join(', ')}`;
+        location.textContent = `${issue.section}${issue.line ? t('diag.locLine', { line: issue.line }) : ''}${issue.roleName ? t('diag.locRole', { role: issue.roleName }) : ''}${t('diag.locAffects', { list: issue.affects.join(', ') })}`;
         body.append(code, title, explanation, location);
         if (issue.excerpt) {
             const excerpt = document.createElement('pre');
@@ -5872,7 +7290,7 @@ function renderRemoteAdminDiagnostics() {
         const resolve = document.createElement('button');
         resolve.type = 'button';
         resolve.className = `btn ${issue.repairKind === 'safe' ? 'btn-primary' : 'btn-secondary'}`;
-        resolve.textContent = issue.repairKind === 'safe' ? 'Resolver' : issue.repairKind === 'confirm' ? 'Revisar decisión' : 'Revisar';
+        resolve.textContent = issue.repairKind === 'safe' ? t('diag.actResolve') : issue.repairKind === 'confirm' ? t('diag.actReviewDecision') : t('diag.actReview');
         resolve.addEventListener('click', () => {
             if (issue.repairKind === 'safe') repairRemoteAdminSafeIssues([issue.id]);
             else applyRemoteAdminChoiceRepair(issue);
@@ -5880,7 +7298,7 @@ function renderRemoteAdminDiagnostics() {
         const locate = document.createElement('button');
         locate.type = 'button';
         locate.className = 'btn btn-secondary';
-        locate.textContent = 'Ir al problema';
+        locate.textContent = t('diag.actGoto');
         locate.disabled = !issue.line;
         locate.addEventListener('click', () => goToRemoteAdminDiagnostic(issue));
         actions.append(resolve, locate);
@@ -5888,7 +7306,7 @@ function renderRemoteAdminDiagnostics() {
             const ignore = document.createElement('button');
             ignore.type = 'button';
             ignore.className = 'btn btn-secondary';
-            ignore.textContent = issue.ignored ? 'Dejar de ignorar' : 'Ignorar';
+            ignore.textContent = issue.ignored ? t('diag.actUnignore') : t('diag.actIgnore');
             ignore.addEventListener('click', () => {
                 if (ignoredRemoteAdminDiagnosticIds.has(issue.id)) ignoredRemoteAdminDiagnosticIds.delete(issue.id);
                 else ignoredRemoteAdminDiagnosticIds.add(issue.id);
@@ -5902,11 +7320,11 @@ function renderRemoteAdminDiagnostics() {
     });
     if (btnResolveSafe) {
         btnResolveSafe.disabled = result.repairable.length === 0;
-        btnResolveSafe.textContent = `Resolver problemas seguros (${result.repairable.length})`;
+        btnResolveSafe.textContent = t('diag.resolveSafeN', { n: result.repairable.length });
     }
     if (btnResolveSelected) {
         btnResolveSelected.disabled = selectedRemoteAdminDiagnosticIds.size === 0;
-        btnResolveSelected.textContent = `Resolver seleccionados (${selectedRemoteAdminDiagnosticIds.size})`;
+        btnResolveSelected.textContent = t('diag.resolveSelectedN', { n: selectedRemoteAdminDiagnosticIds.size });
     }
     if (btnSelectVisibleDiagnostics) btnSelectVisibleDiagnostics.disabled = visible.length === 0;
     if (btnClearDiagnosticSelection) btnClearDiagnosticSelection.disabled = selectedRemoteAdminDiagnosticIds.size === 0;
@@ -5917,7 +7335,7 @@ function renderRemoteAdminDiagnostics() {
 
 function openRemoteAdminDiagnostics(options = {}) {
     if (!hasLoadedRemoteAdmin || currentMode !== 'ra') {
-        alert('Primero carga una configuración RemoteAdmin.');
+        alert(t('repair.loadFirst'));
         return null;
     }
     const result = refreshRemoteAdminDiagnostics({ content: options.content, render: true });
@@ -5930,7 +7348,7 @@ function undoLastRemoteAdminRepair() {
     if (!entry) return false;
     const current = getCurrentRemoteAdminDiagnosticContent();
     if (current !== entry.after) {
-        alert('El contenido cambió después de la reparación; no se deshará automáticamente para evitar pérdida de trabajo.');
+        alert(t('repair.undoBlocked'));
         return false;
     }
     remoteAdminRepairHistory.pop();
@@ -5942,7 +7360,7 @@ function undoLastRemoteAdminRepair() {
 function undoAllRemoteAdminRepairs() {
     if (!remoteAdminRepairHistory.length) return false;
     const first = remoteAdminRepairHistory[0];
-    if (!confirm('¿Deshacer todas las reparaciones realizadas durante esta sesión?')) return false;
+    if (!confirm(t('repair.undoAllConfirm'))) return false;
     remoteAdminRepairHistory = [];
     commitRemoteAdminContentToCentralState(first.before);
     refreshRemoteAdminDiagnostics({ render: true });
@@ -5951,7 +7369,7 @@ function undoAllRemoteAdminRepairs() {
 
 function restoreRemoteAdminSessionOriginal() {
     if (!remoteAdminSessionOriginalText
-        || !confirm('¿Restaurar el RemoteAdmin exactamente como se cargó al iniciar esta sesión?')) return false;
+        || !confirm(t('repair.restoreConfirm'))) return false;
     remoteAdminRepairHistory = [];
     ignoredRemoteAdminDiagnosticIds.clear();
     commitRemoteAdminContentToCentralState(remoteAdminSessionOriginalText);
@@ -6020,7 +7438,7 @@ function buildRemoteAdminExport(options = {}) {
     });
     if (!loaded) {
         validation.errors.unshift(
-            createExportIssue('REMOTE_ADMIN_NOT_LOADED', 'Primero carga un archivo RemoteAdmin.')
+            createExportIssue('REMOTE_ADMIN_NOT_LOADED', t('val.notLoadedFile'))
         );
     }
     const roleEntries = getCurrentRoleEntries(state);
@@ -6109,9 +7527,9 @@ function validatePermissionsDataset(dataset, framework, permissionPolicy = 'safe
     const addWarning = (code, message) => warnings.push(createExportIssue(code, message));
     const reservedGroup = framework === 'exiled' ? 'user' : 'default';
 
-    if (!dataset.loaded) addError('REMOTE_ADMIN_NOT_LOADED', 'Primero carga un archivo RemoteAdmin.');
-    if (dataset.roles.length === 0) addError('NO_GROUPS', 'No se encontraron grupos o roles para exportar.');
-    if (dataset.users.length === 0) addError('NO_USERS', 'No se encontraron usuarios en RemoteAdmin.');
+    if (!dataset.loaded) addError('REMOTE_ADMIN_NOT_LOADED', t('val.notLoadedFile'));
+    if (dataset.roles.length === 0) addError('NO_GROUPS', t('perm.noGroups'));
+    if (dataset.users.length === 0) addError('NO_USERS', t('perm.noUsers'));
     (dataset.sourceValidationIssues || []).forEach(issue => {
         if (issue.severity === 'error') addError(issue.code, issue.message);
         else addWarning(issue.code, issue.message);
@@ -6121,22 +7539,22 @@ function validatePermissionsDataset(dataset, framework, permissionPolicy = 'safe
     const lowerRoleNames = new Map();
     dataset.roles.forEach(role => {
         if (!role.name) {
-            addError('GROUP_NAME_MISSING', 'Existe un grupo sin nombre.');
+            addError('GROUP_NAME_MISSING', t('val.roleNameMissing'));
             return;
         }
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(role.name)) {
-            addError('INVALID_GROUP_NAME', `El grupo "${role.name}" no es un identificador YAML compatible.`);
+            addError('INVALID_GROUP_NAME', t('perm.invalidGroupName', { name: role.name }));
         }
         if (role.name.toLowerCase() === reservedGroup.toLowerCase()) {
-            addError('RESERVED_GROUP_NAME', `El grupo "${role.name}" colisiona con la clave reservada "${reservedGroup}".`);
+            addError('RESERVED_GROUP_NAME', t('perm.reservedGroup', { name: role.name, key: reservedGroup }));
         }
-        if (roleNames.has(role.name)) addError('DUPLICATE_GROUP', `El grupo "${role.name}" está duplicado.`);
+        if (roleNames.has(role.name)) addError('DUPLICATE_GROUP', t('perm.dupGroup', { name: role.name }));
         roleNames.add(role.name);
         const lowerName = role.name.toLowerCase();
         if (lowerRoleNames.has(lowerName) && lowerRoleNames.get(lowerName) !== role.name) {
             addWarning(
                 'CASE_SENSITIVE_GROUP_COLLISION',
-                `Los grupos "${lowerRoleNames.get(lowerName)}" y "${role.name}" solo difieren en mayúsculas.`
+                t('perm.caseCollision', { a: lowerRoleNames.get(lowerName), b: role.name })
             );
         } else {
             lowerRoleNames.set(lowerName, role.name);
@@ -6147,7 +7565,7 @@ function validatePermissionsDataset(dataset, framework, permissionPolicy = 'safe
     let invalidIdCount = 0;
     dataset.users.forEach(user => {
         if (!roleNames.has(user.roleName)) {
-            addError('UNKNOWN_USER_GROUP', `El usuario "${user.id}" está asociado al grupo inexistente "${user.roleName}".`);
+            addError('UNKNOWN_USER_GROUP', t('perm.unknownUserGroup', { id: user.id, group: user.roleName }));
         }
         if (!isValidSteamId64(user.steamId)) {
             invalidIdCount += 1;
@@ -6156,11 +7574,11 @@ function validatePermissionsDataset(dataset, framework, permissionPolicy = 'safe
         const previousRole = steamAssignments.get(user.steamId);
         if (previousRole) {
             if (previousRole === user.roleName) {
-                addWarning('DUPLICATE_STEAM_ID', `El SteamID ${user.steamId} está repetido en el grupo ${user.roleName}.`);
+                addWarning('DUPLICATE_STEAM_ID', t('perm.dupSteam', { steam: user.steamId, group: user.roleName }));
             } else {
                 addError(
                     'CONFLICTING_STEAM_ID',
-                    `El SteamID ${user.steamId} está asociado a los grupos ${previousRole} y ${user.roleName}.`
+                    t('perm.conflictSteam', { steam: user.steamId, a: previousRole, b: user.roleName })
                 );
             }
         } else {
@@ -6169,42 +7587,42 @@ function validatePermissionsDataset(dataset, framework, permissionPolicy = 'safe
     });
     const validSteamUsers = steamAssignments.size;
     if (dataset.users.length > 0 && validSteamUsers === 0) {
-        addError('NO_STEAM_IDS', 'No se encontró ningún SteamID64 válido en RemoteAdmin.');
+        addError('NO_STEAM_IDS', t('perm.noSteam'));
     }
     if (invalidIdCount > 0) {
         addWarning(
             'INCOMPATIBLE_USER_IDS',
-            `${invalidIdCount} usuario(s) no usan un SteamID64 válido; permanecerán en RemoteAdmin pero no cuentan como SteamID.`
+            t('perm.incompatibleIds', { count: invalidIdCount })
         );
     }
 
     if (dataset.nativePermissions.length > 0) {
         addWarning(
             'NO_PLUGIN_PERMISSION_MAPPING',
-            `${dataset.nativePermissions.length} permiso(s) nativo(s) de RemoteAdmin no tienen equivalencia automática en ${framework === 'exiled' ? 'EXILED' : 'LabAPI'}.`
+            t('perm.noMapping', { count: dataset.nativePermissions.length, fw: framework === 'exiled' ? 'EXILED' : 'LabAPI' })
         );
     }
     if (permissionPolicy === 'wildcard') {
         addWarning(
             'WILDCARD_PERMISSIONS',
-            'La política seleccionada concede .* (todos los permisos de plugins) a cada grupo, igual que los ejemplos proporcionados.'
+            t('perm.wildcard')
         );
     } else if (dataset.roles.length > 0) {
         addWarning(
             'EMPTY_PLUGIN_PERMISSIONS',
-            `${dataset.roles.length} grupo(s) se exportarán sin permisos de plugins hasta que exista un mapeo explícito.`
+            t('perm.emptyPerms', { count: dataset.roles.length })
         );
     }
     if (dataset.users.length > 0) {
         addWarning(
             'USERS_LINKED_VIA_REMOTE_ADMIN',
-            `${dataset.users.length} usuario(s) se enlazan mediante su grupo de RemoteAdmin; el esquema de ${framework === 'exiled' ? 'EXILED' : 'LabAPI'} no serializa SteamID en este archivo.`
+            t('perm.linkedUsers', { count: dataset.users.length, fw: framework === 'exiled' ? 'EXILED' : 'LabAPI' })
         );
     }
     if (dataset.roles.some(role => role.badge || role.color)) {
         addWarning(
             'DISPLAY_FIELDS_NOT_SUPPORTED',
-            'Badges, colores y notas permanecen en RemoteAdmin porque el archivo de permisos de plugins no dispone de esos campos.'
+            t('perm.displayFields')
         );
     }
     return { errors, warnings, validSteamUsers };
@@ -6242,11 +7660,11 @@ function serializeLabAPIPermissions(dataset, permissionPolicy) {
 function validateGeneratedPermissionsContent(content, framework) {
     const errors = [];
     const addError = (code, message) => errors.push(createExportIssue(code, message));
-    if (content.startsWith('\uFEFF')) errors.push(createExportIssue('UTF8_BOM', 'El contenido contiene un BOM no permitido.'));
-    if (content.includes('\t')) errors.push(createExportIssue('TAB_INDENTATION', 'La configuración contiene tabulaciones.'));
-    if (content.includes('\r')) errors.push(createExportIssue('INVALID_LINE_ENDINGS', 'La configuración debe utilizar saltos de línea LF.'));
+    if (content.startsWith('\uFEFF')) errors.push(createExportIssue('UTF8_BOM', t('perm.yamlBom')));
+    if (content.includes('\t')) errors.push(createExportIssue('TAB_INDENTATION', t('perm.yamlTabs')));
+    if (content.includes('\r')) errors.push(createExportIssue('INVALID_LINE_ENDINGS', t('perm.yamlCrlf')));
     if (framework === 'labapi' && !content.endsWith('\n')) {
-        addError('MISSING_FINAL_NEWLINE', 'La configuración LabAPI debe finalizar con un salto de línea LF.');
+        addError('MISSING_FINAL_NEWLINE', t('perm.yamlFinalNewline'));
     }
 
     const lines = content.split('\n');
@@ -6261,7 +7679,7 @@ function validateGeneratedPermissionsContent(content, framework) {
             return;
         }
         if (!currentBlock) {
-            if (line.trim()) addError('INVALID_YAML_ROOT', `Línea ${index + 1}: contenido fuera de un grupo YAML.`);
+            if (line.trim()) addError('INVALID_YAML_ROOT', t('perm.yamlRoot', { line: index + 1 }));
             return;
         }
         currentBlock.children.push({ text: line, line: index + 1 });
@@ -6270,11 +7688,11 @@ function validateGeneratedPermissionsContent(content, framework) {
     const topLevelKeys = blocks.map(block => block.key);
     const duplicateKeys = topLevelKeys.filter((key, index) => topLevelKeys.indexOf(key) !== index);
     if (duplicateKeys.length > 0) {
-        addError('DUPLICATE_YAML_KEY', `Claves YAML duplicadas: ${[...new Set(duplicateKeys)].join(', ')}.`);
+        addError('DUPLICATE_YAML_KEY', t('perm.yamlDupKey', { list: [...new Set(duplicateKeys)].join(', ') }));
     }
     const requiredKey = framework === 'exiled' ? 'user' : 'default';
     if (!topLevelKeys.includes(requiredKey)) {
-        addError('MISSING_DEFAULT_GROUP', `Falta el grupo predeterminado "${requiredKey}".`);
+        addError('MISSING_DEFAULT_GROUP', t('perm.yamlMissingDefault', { key: requiredKey }));
     }
 
     blocks.forEach(block => {
@@ -6308,22 +7726,22 @@ function validateGeneratedPermissionsContent(content, framework) {
 
         if (inheritanceCount !== 1) {
             const field = framework === 'exiled' ? 'inheritance: [ ]' : 'inherited_groups: []';
-            addError('INVALID_INHERITANCE_FIELD', `El grupo "${block.key}" debe contener exactamente un campo "${field}" con la indentación esperada.`);
+            addError('INVALID_INHERITANCE_FIELD', t('perm.yamlInheritance', { group: block.key, field }));
         }
         if (framework === 'exiled' && block.key === 'user' && defaultCount !== 1) {
-            addError('INVALID_DEFAULT_FIELD', 'El grupo "user" de EXILED debe contener exactamente "  default: true".');
+            addError('INVALID_DEFAULT_FIELD', t('perm.yamlDefaultField'));
         }
         if (framework === 'exiled' && block.key !== 'user' && defaultCount > 0) {
-            addError('UNEXPECTED_DEFAULT_FIELD', `El grupo "${block.key}" no puede declararse como grupo predeterminado.`);
+            addError('UNEXPECTED_DEFAULT_FIELD', t('perm.yamlUnexpectedDefault', { group: block.key }));
         }
         if (emptyPermissionsCount + permissionHeaderCount !== 1) {
-            addError('INVALID_PERMISSIONS_FIELD', `El grupo "${block.key}" debe contener exactamente un campo permissions.`);
+            addError('INVALID_PERMISSIONS_FIELD', t('perm.yamlPermsField', { group: block.key }));
         }
         if (permissionHeaderCount === 1 && permissionItemCount === 0) {
-            addError('EMPTY_PERMISSION_LIST', `El grupo "${block.key}" abre una lista permissions pero no contiene permisos.`);
+            addError('EMPTY_PERMISSION_LIST', t('perm.yamlEmptyList', { group: block.key }));
         }
         if (permissionHeaderCount === 0 && permissionItemCount > 0) {
-            addError('ORPHAN_PERMISSION_ITEM', `El grupo "${block.key}" contiene permisos fuera de una lista permissions.`);
+            addError('ORPHAN_PERMISSION_ITEM', t('perm.yamlOrphanItem', { group: block.key }));
         }
         if (permissionHeaderCount === 1 && permissionItemCount > 0) {
             const itemsFollowHeader = permissionItemIndexes.every(
@@ -6332,12 +7750,12 @@ function validateGeneratedPermissionsContent(content, framework) {
             if (!itemsFollowHeader) {
                 addError(
                     'INVALID_PERMISSION_ITEM_ORDER',
-                    `Los permisos del grupo "${block.key}" deben aparecer inmediatamente después del encabezado permissions.`
+                    t('perm.yamlItemOrder', { group: block.key })
                 );
             }
         }
         unknownLines.forEach(child => {
-            addError('INVALID_GROUP_FIELD', `Línea ${child.line}: campo o indentación no compatible dentro del grupo "${block.key}".`);
+            addError('INVALID_GROUP_FIELD', t('perm.yamlGroupField', { line: child.line, group: block.key }));
         });
     });
     return errors;
@@ -6345,7 +7763,7 @@ function validateGeneratedPermissionsContent(content, framework) {
 
 function buildPermissionsExport(framework, options = {}) {
     if (!['exiled', 'labapi'].includes(framework)) {
-        throw new Error(`Framework de permisos no compatible: ${framework}`);
+        throw new Error(t('perm.frameworkBad', { fw: framework }));
     }
     const state = options.state || parsedData;
     const loaded = options.loaded ?? (state === parsedData ? hasLoadedRemoteAdmin : true);
@@ -6445,7 +7863,7 @@ function renderExportIssues(result) {
         ...(result.warnings || []).map(issue => ({ ...issue, severity: 'warning' }))
     ];
     if (issues.length === 0) {
-        warningRegion.textContent = 'Sin advertencias.';
+        warningRegion.textContent = t('common.noWarnings');
         warningRegion.classList.remove('has-warnings', 'has-errors');
         return;
     }
@@ -6454,7 +7872,7 @@ function renderExportIssues(result) {
     issues.forEach(issue => {
         const item = document.createElement('li');
         item.className = `export-issue ${issue.severity}`;
-        item.textContent = `${issue.severity === 'error' ? 'Error' : 'Aviso'}: ${issue.message}`;
+        item.textContent = `${issue.severity === 'error' ? t('export.issueError') : t('export.issueWarning')}: ${issue.message}`;
         list.appendChild(item);
     });
     warningRegion.appendChild(list);
@@ -6488,7 +7906,7 @@ function syncRemoteAdminPreviewControls() {
         btnUndoIdRenumber.hidden = analysisVisible || !hasRemoteAdminPreview || !remoteAdminIdRenumberUndoSnapshot;
         btnUndoIdRenumber.disabled = !btnUndoIdRenumber.hidden && !canUndoRemoteAdminIdRenumber();
         btnUndoIdRenumber.title = btnUndoIdRenumber.disabled
-            ? 'El contenido cambió después de la renumeración y ya no puede deshacerse automáticamente.'
+            ? t('export.undoRenumberTitle')
             : '';
     }
     if (btnCopy) btnCopy.hidden = analysisVisible;
@@ -6536,25 +7954,25 @@ function renderRemoteAdminOrganizationComparison(result) {
     if (remoteAdminOrganizationOrganized) remoteAdminOrganizationOrganized.value = result.organized;
     if (remoteAdminOrganizationStatus) {
         if (!result.changed) {
-            remoteAdminOrganizationStatus.textContent = 'El archivo ya utiliza el orden jerárquico esperado.';
+            remoteAdminOrganizationStatus.textContent = t('org.statusOk');
         } else if (result.canApply && result.inheritedErrors?.length > 0) {
-            remoteAdminOrganizationStatus.textContent = 'La organización es segura y puede aplicarse. Los errores existentes seguirán bloqueando la descarga.';
+            remoteAdminOrganizationStatus.textContent = t('org.statusSafe');
         } else if (result.canApply) {
-            remoteAdminOrganizationStatus.textContent = 'Organización terminada. La relectura y la comparación semántica fueron correctas.';
+            remoteAdminOrganizationStatus.textContent = t('org.statusDone');
         } else {
-            remoteAdminOrganizationStatus.textContent = 'El resultado se generó, pero contiene conflictos que deben resolverse antes de aplicarlo.';
+            remoteAdminOrganizationStatus.textContent = t('org.statusBlocked');
         }
     }
     if (remoteAdminOrganizationMetrics) remoteAdminOrganizationMetrics.replaceChildren();
-    appendRemoteAdminOrganizationMetric('usuarios', result.after.users);
-    appendRemoteAdminOrganizationMetric('grupos', result.after.groups);
-    appendRemoteAdminOrganizationMetric('miembros movidos', result.changes.membersMoved);
-    appendRemoteAdminOrganizationMetric('bloques movidos', result.changes.propertyBlocksMoved);
-    appendRemoteAdminOrganizationMetric('listas ordenadas', result.changes.permissionListsReordered);
-    appendRemoteAdminOrganizationMetric('líneas vacías eliminadas', result.changes.blankLinesRemoved);
-    appendRemoteAdminOrganizationMetric('advertencias', result.warnings.length);
-    appendRemoteAdminOrganizationMetric('errores del archivo', result.inheritedErrors?.length || 0);
-    appendRemoteAdminOrganizationMetric('bloqueos de organización', result.blockingErrors?.length || 0);
+    appendRemoteAdminOrganizationMetric(t('org.mUsers'), result.after.users);
+    appendRemoteAdminOrganizationMetric(t('org.mGroups'), result.after.groups);
+    appendRemoteAdminOrganizationMetric(t('org.mMembers'), result.changes.membersMoved);
+    appendRemoteAdminOrganizationMetric(t('org.mBlocks'), result.changes.propertyBlocksMoved);
+    appendRemoteAdminOrganizationMetric(t('org.mLists'), result.changes.permissionListsReordered);
+    appendRemoteAdminOrganizationMetric(t('org.mBlanks'), result.changes.blankLinesRemoved);
+    appendRemoteAdminOrganizationMetric(t('org.mWarnings'), result.warnings.length);
+    appendRemoteAdminOrganizationMetric(t('org.mFileErrors'), result.inheritedErrors?.length || 0);
+    appendRemoteAdminOrganizationMetric(t('org.mBlocking'), result.blockingErrors?.length || 0);
 
     if (remoteAdminOrganizationIssues) {
         remoteAdminOrganizationIssues.replaceChildren();
@@ -6564,15 +7982,15 @@ function renderRemoteAdminOrganizationComparison(result) {
             ...(result.warnings || []).map(issue => ({ ...issue, severity: 'warning' }))
         ];
         if (issues.length === 0) {
-            remoteAdminOrganizationIssues.textContent = 'Sin conflictos. Comentarios, propiedades desconocidas y datos semánticos conservados.';
+            remoteAdminOrganizationIssues.textContent = t('org.noIssues');
         } else {
             const list = document.createElement('ul');
             issues.forEach(issue => {
                 const item = document.createElement('li');
                 item.className = issue.severity;
                 const issueLabel = issue.severity === 'error'
-                    ? blockingIssueKeys.has(`${issue.code}\u0000${issue.message}`) ? 'Bloqueo' : 'Error existente'
-                    : 'Aviso';
+                    ? blockingIssueKeys.has(`${issue.code}\u0000${issue.message}`) ? t('issue.blocking') : t('issue.existing')
+                    : t('issue.warning');
                 item.textContent = `${issueLabel}: ${issue.message}`;
                 list.appendChild(item);
             });
@@ -6588,12 +8006,12 @@ function renderRemoteAdminOrganizationComparison(result) {
 
 function startRemoteAdminOrganization() {
     if (!activeRemoteAdminExportResult || currentMode !== 'ra') {
-        alert('Primero genera una previsualización válida de RemoteAdmin.');
+        alert(t('export.needPreviewValid'));
         return;
     }
     if (btnOrganizeRemoteAdmin) {
         btnOrganizeRemoteAdmin.disabled = true;
-        btnOrganizeRemoteAdmin.textContent = 'Analizando…';
+        btnOrganizeRemoteAdmin.textContent = t('export.analyzing');
     }
     setTimeout(() => {
         try {
@@ -6604,11 +8022,11 @@ function startRemoteAdminOrganization() {
             );
             renderRemoteAdminOrganizationComparison(result);
         } catch (error) {
-            alert(`No se pudo organizar RemoteAdmin: ${error?.message || 'el análisis estructural falló.'}`);
+            alert(t('org.fail', { error: error?.message || t('org.failStructural') }));
         } finally {
             if (btnOrganizeRemoteAdmin) {
                 btnOrganizeRemoteAdmin.disabled = false;
-                btnOrganizeRemoteAdmin.textContent = 'Organizar RemoteAdmin';
+                btnOrganizeRemoteAdmin.textContent = t('export.organize');
             }
         }
     }, 0);
@@ -6617,14 +8035,14 @@ function startRemoteAdminOrganization() {
 function applyRemoteAdminOrganization() {
     const organization = activeRemoteAdminOrganization;
     if (!organization?.canApply || !organization.changed) {
-        alert('La organización no puede aplicarse porque no hay cambios o la transformación tiene un bloqueo propio.');
+        alert(t('org.cannotApply'));
         return;
     }
     const organizationWarnings = [...(organization.warnings || [])];
     commitRemoteAdminRepair(
         organization.original,
         organization.organized,
-        'Organización estructural de RemoteAdmin'
+        t('org.historyLabel')
     );
     activeRemoteAdminOrganization = null;
     setRemoteAdminOrganizationComparisonVisible(false);
@@ -6632,7 +8050,7 @@ function applyRemoteAdminOrganization() {
         filename: remoteAdminExportFilename?.value
     });
     preview.warnings = [
-        createExportIssue('REMOTE_ADMIN_ORGANIZED', 'La organización fue aplicada al estado central y puede deshacerse desde Diagnóstico.'),
+        createExportIssue('REMOTE_ADMIN_ORGANIZED', t('org.appliedNotice')),
         ...organizationWarnings,
         ...preview.warnings
     ].filter((issue, index, values) => values.findIndex(current =>
@@ -6692,19 +8110,19 @@ function renderRemoteAdminIdRenumberRows() {
         const statusCell = document.createElement('td');
         if (row.reserved) {
             statusCell.className = 'reserved';
-            statusCell.textContent = 'Reservada';
+            statusCell.textContent = t('ren.rowReserved');
         } else if (row.reuseType === 'REUSED_DECLARED_UNUSED') {
             statusCell.className = 'reused';
-            statusCell.textContent = 'Reutilizada (declarada sin uso)';
+            statusCell.textContent = t('ren.rowReusedDeclared');
         } else if (row.reuseType === 'REUSED_UNDECLARED_UNUSED') {
             statusCell.className = 'reused';
-            statusCell.textContent = 'Asignada (hueco disponible)';
+            statusCell.textContent = t('ren.rowReusedUndeclared');
         } else if (row.changed) {
             statusCell.className = 'changed';
-            statusCell.textContent = 'Se renumerará';
+            statusCell.textContent = t('ren.rowChanged');
         } else {
             statusCell.className = 'unchanged';
-            statusCell.textContent = 'Sin cambios';
+            statusCell.textContent = t('ren.rowUnchanged');
         }
         tableRow.append(prefixCell, oldCell, newCell, userCell, statusCell);
         remoteAdminIdRenumberBody.appendChild(tableRow);
@@ -6714,7 +8132,7 @@ function renderRemoteAdminIdRenumberRows() {
         const cell = document.createElement('td');
         cell.colSpan = 5;
         cell.className = 'unchanged';
-        cell.textContent = 'No hay IDs modificadas con el filtro actual.';
+        cell.textContent = t('ren.rowsEmpty');
         tableRow.appendChild(cell);
         remoteAdminIdRenumberBody.appendChild(tableRow);
     }
@@ -6726,23 +8144,23 @@ function renderRemoteAdminIdRenumberPreview(result) {
     if (remoteAdminIdRenumberStatus) {
         const reusedCount = (result.stats.reusedDeclared || 0) + (result.stats.reusedUndeclared || 0);
         remoteAdminIdRenumberStatus.textContent = !result.changed
-            ? 'Todas las IDs numeradas ya son consecutivas desde 1.'
+            ? t('ren.statusDone')
             : result.canApply && result.inheritedErrors?.length > 0
-                ? `La renumeración es segura (${result.stats.changed} cambios, ${reusedCount} reutilizadas). Los errores existentes seguirán bloqueando la descarga.`
+                ? t('ren.statusSafe', { changed: result.stats.changed, reused: reusedCount })
             : result.canApply
-                ? `Mapa calculado: ${result.stats.changed} cambios, ${reusedCount} IDs reutilizadas. Ninguna identidad ni configuración fue alterada.`
-                : 'La renumeración fue calculada, pero existen conflictos que bloquean su aplicación.';
+                ? t('ren.statusReady', { changed: result.stats.changed, reused: reusedCount })
+                : t('ren.statusBlocked');
     }
     if (remoteAdminIdRenumberMetrics) {
         remoteAdminIdRenumberMetrics.replaceChildren();
-        appendRemoteAdminOrganizationMetric('IDs analizadas', result.stats.ids, remoteAdminIdRenumberMetrics);
-        appendRemoteAdminOrganizationMetric('modificadas', result.stats.changed, remoteAdminIdRenumberMetrics);
-        appendRemoteAdminOrganizationMetric('sin cambios', result.stats.unchanged, remoteAdminIdRenumberMetrics);
-        appendRemoteAdminOrganizationMetric('reutilizadas', (result.stats.reusedDeclared || 0) + (result.stats.reusedUndeclared || 0), remoteAdminIdRenumberMetrics);
-        appendRemoteAdminOrganizationMetric('reservadas', result.stats.reserved, remoteAdminIdRenumberMetrics);
-        appendRemoteAdminOrganizationMetric('rangos', result.stats.ranges, remoteAdminIdRenumberMetrics);
-        appendRemoteAdminOrganizationMetric('errores del archivo', result.inheritedErrors?.length || 0, remoteAdminIdRenumberMetrics);
-        appendRemoteAdminOrganizationMetric('bloqueos', result.blockingErrors?.length || 0, remoteAdminIdRenumberMetrics);
+        appendRemoteAdminOrganizationMetric(t('ren.mIds'), result.stats.ids, remoteAdminIdRenumberMetrics);
+        appendRemoteAdminOrganizationMetric(t('ren.mChanged'), result.stats.changed, remoteAdminIdRenumberMetrics);
+        appendRemoteAdminOrganizationMetric(t('ren.mUnchanged'), result.stats.unchanged, remoteAdminIdRenumberMetrics);
+        appendRemoteAdminOrganizationMetric(t('ren.mReused'), (result.stats.reusedDeclared || 0) + (result.stats.reusedUndeclared || 0), remoteAdminIdRenumberMetrics);
+        appendRemoteAdminOrganizationMetric(t('ren.mReserved'), result.stats.reserved, remoteAdminIdRenumberMetrics);
+        appendRemoteAdminOrganizationMetric(t('ren.mRanges'), result.stats.ranges, remoteAdminIdRenumberMetrics);
+        appendRemoteAdminOrganizationMetric(t('ren.mFileErrors'), result.inheritedErrors?.length || 0, remoteAdminIdRenumberMetrics);
+        appendRemoteAdminOrganizationMetric(t('ren.mBlocking'), result.blockingErrors?.length || 0, remoteAdminIdRenumberMetrics);
     }
 
     if (remoteAdminIdRenumberAvailableSummary) {
@@ -6752,7 +8170,7 @@ function renderRemoteAdminIdRenumberPreview(result) {
             group.className = 'remoteadmin-id-renumber-available-group';
             const title = document.createElement('span');
             title.className = 'remoteadmin-id-renumber-available-title';
-            title.textContent = 'IDs disponibles detectadas:';
+            title.textContent = t('ren.availTitle');
             group.appendChild(title);
             result.availableDetected.slice(0, 16).forEach(item => {
                 const pill = document.createElement('span');
@@ -6760,13 +8178,13 @@ function renderRemoteAdminIdRenumberPreview(result) {
                     ? 'declared-unused'
                     : item.state === 'RESERVED' ? 'reserved' : 'undeclared-unused';
                 pill.className = `remoteadmin-id-renumber-pill ${pillClass}`;
-                pill.textContent = `${item.roleName} (${item.state === 'DECLARED_UNUSED' ? 'declarada' : item.state === 'RESERVED' ? 'reservada' : 'disponible'})`;
+                pill.textContent = `${item.roleName} (${item.state === 'DECLARED_UNUSED' ? t('ren.availDeclared') : item.state === 'RESERVED' ? t('ren.availReserved') : t('ren.availFree')})`;
                 group.appendChild(pill);
             });
             if (result.availableDetected.length > 16) {
                 const more = document.createElement('span');
                 more.className = 'remoteadmin-id-renumber-pill';
-                more.textContent = `+${result.availableDetected.length - 16} más`;
+                more.textContent = t('ren.availMore', { count: result.availableDetected.length - 16 });
                 group.appendChild(more);
             }
             remoteAdminIdRenumberAvailableSummary.appendChild(group);
@@ -6776,12 +8194,12 @@ function renderRemoteAdminIdRenumberPreview(result) {
             reusedGroup.className = 'remoteadmin-id-renumber-available-group';
             const reusedTitle = document.createElement('span');
             reusedTitle.className = 'remoteadmin-id-renumber-available-title';
-            reusedTitle.textContent = 'IDs que serán reutilizadas:';
+            reusedTitle.textContent = t('ren.reusedTitle');
             reusedGroup.appendChild(reusedTitle);
             result.reusedIds.forEach(item => {
                 const pill = document.createElement('span');
                 pill.className = 'remoteadmin-id-renumber-pill reused';
-                pill.textContent = `${item.fromRole} → ${item.roleName} (${item.type === 'REUSED_DECLARED_UNUSED' ? 'declarada sin uso' : 'disponible no declarada'})`;
+                pill.textContent = `${item.fromRole} → ${item.roleName} (${item.type === 'REUSED_DECLARED_UNUSED' ? t('ren.reusedDeclared') : t('ren.reusedFree')})`;
                 reusedGroup.appendChild(pill);
             });
             remoteAdminIdRenumberAvailableSummary.appendChild(reusedGroup);
@@ -6793,10 +8211,10 @@ function renderRemoteAdminIdRenumberPreview(result) {
         result.ranges.forEach(range => {
             const badge = document.createElement('span');
             badge.className = `remoteadmin-id-renumber-range${range.changed ? ' changed' : ''}`;
-            const reuseNote = range.reused ? ` (${range.reused} reutilizada(s))` : '';
+            const reuseNote = range.reused ? t('ren.rangeReuse', { reused: range.reused }) : '';
             badge.textContent = range.changed
-                ? `${range.prefix}: ${range.changed} cambio(s)${reuseNote}`
-                : `${range.prefix}: sin cambios`;
+                ? t('ren.rangeChanged', { prefix: range.prefix, changed: range.changed, reuse: reuseNote })
+                : t('ren.rangeClean', { prefix: range.prefix });
             remoteAdminIdRenumberRanges.appendChild(badge);
         });
     }
@@ -6811,15 +8229,15 @@ function renderRemoteAdminIdRenumberPreview(result) {
             ...(result.warnings || []).map(issue => ({ ...issue, severity: 'warning' }))
         ];
         if (issues.length === 0) {
-            remoteAdminIdRenumberIssues.textContent = 'SteamID, badges, colores, permisos, notas y propiedades desconocidas fueron conservados.';
+            remoteAdminIdRenumberIssues.textContent = t('ren.noIssues');
         } else {
             const list = document.createElement('ul');
             issues.forEach(issue => {
                 const item = document.createElement('li');
                 item.className = issue.severity;
                 const issueLabel = issue.severity === 'error'
-                    ? blockingIssueKeys.has(`${issue.code}\u0000${issue.message}`) ? 'Bloqueo' : 'Error existente'
-                    : 'Aviso';
+                    ? blockingIssueKeys.has(`${issue.code}\u0000${issue.message}`) ? t('issue.blocking') : t('issue.existing')
+                    : t('issue.warning');
                 item.textContent = `${issueLabel}: ${issue.message}`;
                 list.appendChild(item);
             });
@@ -6835,12 +8253,12 @@ function renderRemoteAdminIdRenumberPreview(result) {
 
 function startRemoteAdminIdRenumber() {
     if (!activeRemoteAdminExportResult || currentMode !== 'ra') {
-        alert('Primero genera una previsualización de RemoteAdmin.');
+        alert(t('ren.needPreview'));
         return;
     }
     if (btnRenumberRemoteAdmin) {
         btnRenumberRemoteAdmin.disabled = true;
-        btnRenumberRemoteAdmin.textContent = 'Analizando…';
+        btnRenumberRemoteAdmin.textContent = t('ren.analyzing');
     }
     setTimeout(() => {
         try {
@@ -6853,11 +8271,11 @@ function startRemoteAdminIdRenumber() {
             );
             renderRemoteAdminIdRenumberPreview(result);
         } catch (error) {
-            alert(`No se pudieron reorganizar las IDs: ${error?.message || 'el análisis estructural falló.'}`);
+            alert(t('ren.fail', { error: error?.message || t('ren.failStructural') }));
         } finally {
             if (btnRenumberRemoteAdmin) {
                 btnRenumberRemoteAdmin.disabled = false;
-                btnRenumberRemoteAdmin.textContent = 'Reorganizar IDs';
+                btnRenumberRemoteAdmin.textContent = t('export.renumber');
             }
         }
     }, 0);
@@ -6878,7 +8296,7 @@ function commitRemoteAdminContentToCentralState(content) {
 function applyRemoteAdminIdRenumber() {
     const result = activeRemoteAdminIdRenumber;
     if (!result?.canApply) {
-        alert('La reorganización no puede aplicarse porque no hay cambios o la transformación tiene un bloqueo propio.');
+        alert(t('ren.cannotApply'));
         return;
     }
     const beforeContent = result.original;
@@ -6888,7 +8306,7 @@ function applyRemoteAdminIdRenumber() {
     commitRemoteAdminRepair(
         beforeContent,
         afterContent,
-        `Reorganización de ${changedCount} ID(s) internas`
+        t('ren.appliedHistory', { changed: changedCount })
     );
     remoteAdminIdRenumberUndoSnapshot = {
         beforeContent,
@@ -6902,7 +8320,7 @@ function applyRemoteAdminIdRenumber() {
         preview.warnings = [
             createExportIssue(
                 'ROLE_IDS_RENUMBERED',
-                `Reorganización aplicada: ${changedCount} ID(s) modificadas en ${rangeCount} rango(s).`
+                t('ren.appliedNotice', { changed: changedCount, ranges: rangeCount })
             ),
             ...preview.warnings
         ];
@@ -6911,26 +8329,21 @@ function applyRemoteAdminIdRenumber() {
     }
     syncRemoteAdminPreviewControls();
     const remainingErrorNotice = preview?.errors?.length
-        ? `\n\nAviso: permanecen ${preview.errors.length} error(es) del archivo; la descarga continúa bloqueada.`
+        ? t('ren.appliedRemaining', { count: preview.errors.length })
         : '';
     alert(
-        `Reorganización completada correctamente.\n\n`
-        + `Rangos procesados: ${rangeCount}\n`
-        + `IDs modificadas: ${changedCount}\n`
-        + `IDs sin cambios: ${result.stats.unchanged}\n\n`
-        + '✓ SteamID conservadas\n✓ Badges y colores conservados\n✓ Permisos actualizados\n✓ Relectura correcta'
-        + remainingErrorNotice
+        t('ren.appliedOk', { ranges: rangeCount, changed: changedCount, unchanged: result.stats.unchanged, remaining: remainingErrorNotice })
     );
 }
 
 function undoRemoteAdminIdRenumber() {
     const snapshot = remoteAdminIdRenumberUndoSnapshot;
     if (!snapshot || !canUndoRemoteAdminIdRenumber()) {
-        alert('No se puede deshacer porque el RemoteAdmin cambió después de la reorganización.');
+        alert(t('ren.cannotUndo'));
         syncRemoteAdminPreviewControls();
         return;
     }
-    if (!confirm('Se restaurará la numeración anterior de esta sesión. ¿Continuar?')) return;
+    if (!confirm(t('ren.undoConfirm'))) return;
     const restoredContent = snapshot.beforeContent;
     remoteAdminIdRenumberUndoSnapshot = null;
     if (remoteAdminRepairHistory.at(-1)?.after === snapshot.afterContent) {
@@ -6939,7 +8352,7 @@ function undoRemoteAdminIdRenumber() {
     commitRemoteAdminContentToCentralState(restoredContent);
     renderRemoteAdminExportPreview(false, false);
     syncRemoteAdminPreviewControls();
-    alert('La reorganización de IDs fue deshecha correctamente.');
+    alert(t('ren.undone'));
 }
 
 if (btnRenumberRemoteAdmin) btnRenumberRemoteAdmin.addEventListener('click', startRemoteAdminIdRenumber);
@@ -6978,7 +8391,7 @@ if (remoteAdminIdRenumberOnlyChanged) {
 
 function renderRemoteAdminExportPreview(shouldOpenModal = true, initializeFilename = false) {
     if (!hasLoadedRemoteAdmin || currentMode !== 'ra') {
-        alert('Primero carga una configuración válida de RemoteAdmin.');
+        alert(t('export.needPreview'));
         return null;
     }
 
@@ -6998,14 +8411,14 @@ function renderRemoteAdminExportPreview(shouldOpenModal = true, initializeFilena
     activePermissionsExportResult = null;
 
     const primaryTab = tabBtns[0];
-    primaryTab.textContent = 'Remote Admin';
+    primaryTab.textContent = t('export.tabRa');
     tabBtns.forEach((tab, index) => { tab.hidden = index > 0; });
     configOutput.value = result.content;
     document.getElementById('exiled-output').value = '';
     document.getElementById('labapi-output').value = '';
     activateExportTab(primaryTab);
 
-    document.getElementById('export-modal-title').textContent = 'Previsualización — RemoteAdmin';
+    document.getElementById('export-modal-title').textContent = t('export.titleRa');
     document.getElementById('export-preview-framework').textContent = result.frameworkLabel;
     document.getElementById('export-stat-users').textContent = String(result.stats.users);
     document.getElementById('export-stat-groups').textContent = String(result.stats.groups);
@@ -7017,8 +8430,8 @@ function renderRemoteAdminExportPreview(shouldOpenModal = true, initializeFilena
         remoteAdminExportFilename.value = result.filename;
     }
     if (remoteAdminExportFormat) {
-        const finalLineLabel = result.format.finalNewline ? 'línea final presente' : 'sin línea final';
-        remoteAdminExportFormat.textContent = `Texto RemoteAdmin ${result.format.extension} · ${result.format.encoding}${result.format.bom ? ' con BOM' : ' sin BOM'} · ${result.format.lineEnding} · ${finalLineLabel}`;
+        const finalLineLabel = result.format.finalNewline ? t('export.finalLine') : t('export.noFinalLine');
+        remoteAdminExportFormat.textContent = t('export.formatDetail', { ext: result.format.extension, enc: result.format.encoding, bom: result.format.bom ? t('export.withBom') : t('export.withoutBom'), le: result.format.lineEnding, final: finalLineLabel });
     }
     renderExportIssues(result);
     setRemoteAdminOrganizationComparisonVisible(false);
@@ -7050,7 +8463,7 @@ function renderPermissionsExportPreview(framework, shouldOpenModal = true) {
     tabBtns.forEach(tab => { tab.hidden = tab !== targetTab; });
     if (targetTab) activateExportTab(targetTab);
 
-    document.getElementById('export-modal-title').textContent = `Previsualización — Permissions ${result.frameworkLabel === 'LabAPI' ? 'Lab API' : 'EXILED'}`;
+    document.getElementById('export-modal-title').textContent = t('export.titlePerms', { framework: result.frameworkLabel === 'LabAPI' ? 'Lab API' : 'EXILED' });
     document.getElementById('export-preview-framework').textContent = result.frameworkLabel;
     document.getElementById('export-stat-users').textContent = String(result.stats.users);
     document.getElementById('export-stat-groups').textContent = String(result.stats.groups);
@@ -7063,8 +8476,8 @@ function renderPermissionsExportPreview(framework, shouldOpenModal = true) {
     const policyHelp = document.getElementById('export-permission-policy-help');
     if (policyHelp) {
         policyHelp.textContent = policy === 'wildcard'
-            ? 'Advertencia: .* concede todos los permisos de todos los plugins a cada grupo.'
-            : 'Los permisos nativos de RemoteAdmin no se convierten en nodos de plugins sin un mapeo explícito.';
+            ? t('export.policyWildcardHelp')
+            : t('export.policySafeHelp');
     }
     const downloadButton = document.getElementById('btn-download');
     if (downloadButton) downloadButton.disabled = !result.valid;
@@ -7074,7 +8487,7 @@ function renderPermissionsExportPreview(framework, shouldOpenModal = true) {
 
 function openPermissionsExportPreview(framework) {
     if (!hasLoadedRemoteAdmin || currentMode !== 'ra') {
-        alert('Primero carga una configuración válida de RemoteAdmin.');
+        alert(t('export.needPreview'));
         return;
     }
     if (exportPermissionPolicy) exportPermissionPolicy.value = 'safe';
@@ -7121,7 +8534,7 @@ let bulkTargetGroup = null;
 
 function openBulkModal(prefix) {
     bulkTargetGroup = prefix;
-    document.getElementById('bulk-modal-title').textContent = `Carga Masiva - Grupo ${prefix}`;
+    document.getElementById('bulk-modal-title').textContent = t('cards.bulkTitle', { prefix });
     bulkInput.value = '';
     showModal(bulkModal, bulkInput);
 }
@@ -7172,8 +8585,8 @@ if (btnProcessBulk) {
             
             group.members.push({
                 id: id,
-                name: name || 'Sin Nombre',
-                notes: "Añadido masivamente",
+                name: name || t('cards.noName'),
+                notes: t('bulkMembers.autoNote'),
                 badge: defaultBadge,
                 color: defaultColor,
                 cover: defaultCover,
@@ -7191,7 +8604,7 @@ if (btnProcessBulk) {
         
         recomputeGroupPermissions(group);
         hideModal(bulkModal);
-        alert(`Se añadieron ${addedCount} miembros al grupo ${bulkTargetGroup}.`);
+        alert(t('bulkMembers.added', { count: addedCount, group: bulkTargetGroup }));
         updateOldRoles();
         renderRAEditor();
     });
@@ -7217,13 +8630,13 @@ function populateBadgeBulkTargetGroups() {
     badgeBulkTargetGroup.replaceChildren();
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Selecciona un grupo';
+    placeholder.textContent = t('badgeBulk.selectGroup');
     badgeBulkTargetGroup.appendChild(placeholder);
     Object.keys(parsedData.groups || {}).sort((a, b) => a.localeCompare(b)).forEach(prefix => {
         const option = document.createElement('option');
         option.value = prefix;
         const group = parsedData.groups[prefix];
-        option.textContent = `Grupo ${prefix}${!group.isNumbered && group.members.length > 0 ? ' (rol compartido)' : ''}`;
+        option.textContent = t('cards.groupName', { prefix }) + (!group.isNumbered && group.members.length > 0 ? t('cards.sharedRole') : '');
         badgeBulkTargetGroup.appendChild(option);
     });
     const preferredValue = [previousValue, currentDesktopGroup, currentSelectedGroup]
@@ -7232,31 +8645,31 @@ function populateBadgeBulkTargetGroups() {
 }
 
 function getBadgeBulkActionOptions(record) {
-    if (record.status === 'invalid') return [['cancel', 'Cancelar registro']];
+    if (record.status === 'invalid') return [['cancel', t('badgeBulk.actCancel')]];
     if (record.existingMatch) {
         return [
-            ['omit', 'Omitir'],
-            ['replace', 'Reemplazar existente'],
-            ['update', 'Actualizar campos modificados'],
-            ['cancel', 'Cancelar registro']
+            ['omit', t('badgeBulk.actOmit')],
+            ['replace', t('badgeBulk.actReplace')],
+            ['update', t('badgeBulk.actUpdate')],
+            ['cancel', t('badgeBulk.actCancel')]
         ];
     }
     if (record.duplicateOf) {
         return [
-            ['import', 'Usar este registro'],
-            ['omit', 'Omitir'],
-            ['cancel', 'Cancelar registro']
+            ['import', t('badgeBulk.actImport')],
+            ['omit', t('badgeBulk.actOmit')],
+            ['cancel', t('badgeBulk.actCancel')]
         ];
     }
     if (record.sharedRoleAlternative) {
         return [
-            ['import', 'Usar esta combinación'],
-            ['cancel', 'Cancelar registro']
+            ['import', t('badgeBulk.actImportCombo')],
+            ['cancel', t('badgeBulk.actCancel')]
         ];
     }
     return [
-        ['import', 'Añadir'],
-        ['cancel', 'Cancelar registro']
+        ['import', t('badgeBulk.actAdd')],
+        ['cancel', t('badgeBulk.actCancel')]
     ];
 }
 
@@ -7264,11 +8677,11 @@ function updateBadgeBulkSummary() {
     if (!badgeBulkSummary) return;
     const summary = getBadgeBulkSummary(badgeBulkPreviewRecords);
     badgeBulkSummary.innerHTML = `
-        <span class="summary-item"><span class="summary-count">${summary.total}</span> Total</span>
-        <span class="summary-item"><span class="summary-count">${summary.valid}</span> Válidos</span>
-        <span class="summary-item"><span class="summary-count">${summary.invalid}</span> Inválidos</span>
-        <span class="summary-item"><span class="summary-count">${summary.duplicates}</span> Duplicados/conflictos</span>
-        <span class="summary-item"><span class="summary-count">${summary.omitted}</span> Omitidos/cancelados</span>
+        <span class="summary-item"><span class="summary-count">${summary.total}</span> ${t('badgeBulk.sumTotal')}</span>
+        <span class="summary-item"><span class="summary-count">${summary.valid}</span> ${t('badgeBulk.sumValid')}</span>
+        <span class="summary-item"><span class="summary-count">${summary.invalid}</span> ${t('badgeBulk.sumInvalid')}</span>
+        <span class="summary-item"><span class="summary-count">${summary.duplicates}</span> ${t('badgeBulk.sumDupes')}</span>
+        <span class="summary-item"><span class="summary-count">${summary.omitted}</span> ${t('badgeBulk.sumOmitted')}</span>
     `;
     if (btnConfirmBadges) {
         btnConfirmBadges.disabled = summary.ready === 0 || badgeBulkPreviewRevision !== remoteAdminRevision;
@@ -7280,20 +8693,20 @@ function appendBadgeBulkApplyIssues(result) {
     const notice = document.createElement('div');
     notice.className = 'badge-bulk-apply-issues';
     const heading = document.createElement('strong');
-    heading.textContent = 'Hay registros pendientes de corregir:';
+    heading.textContent = t('badgeBulk.applyHeading');
     notice.appendChild(heading);
     if (result.issues.length > 0) {
         const list = document.createElement('ul');
         result.issues.forEach(issue => {
             const item = document.createElement('li');
-            const recordLabel = issue.recordNumber ? `Registro ${issue.recordNumber}, ` : '';
-            item.textContent = `${recordLabel}línea ${issue.line}: ${issue.message}`;
+            const recordLabel = issue.recordNumber ? t('badgeBulk.applyRecord', { n: issue.recordNumber }) : '';
+            item.textContent = t('badgeBulk.applyLine', { prefix: recordLabel, line: issue.line, message: issue.message });
             list.appendChild(item);
         });
         notice.appendChild(list);
     } else {
         const detail = document.createElement('span');
-        detail.textContent = ` ${result.invalid} registro(s) inválido(s) permanecen en la vista previa.`;
+        detail.textContent = t('badgeBulk.applyInvalid', { count: result.invalid });
         notice.appendChild(detail);
     }
     badgeBulkSummary.appendChild(notice);
@@ -7311,11 +8724,11 @@ function renderBadgeBulkPreview() {
     if (!badgeBulkPreviewBody) return;
     badgeBulkPreviewBody.replaceChildren();
     const statusLabels = {
-        valid: 'Válido',
-        warning: 'Válido con avisos',
-        duplicate: 'Duplicado',
-        conflict: 'Conflicto',
-        invalid: 'Inválido'
+        valid: t('badgeBulk.statusValid'),
+        warning: t('badgeBulk.statusWarning'),
+        duplicate: t('badgeBulk.statusDuplicate'),
+        conflict: t('badgeBulk.statusConflict'),
+        invalid: t('badgeBulk.statusInvalid')
     };
     const statusClasses = {
         valid: 'valid',
@@ -7342,12 +8755,12 @@ function renderBadgeBulkPreview() {
 
         const issueCell = appendBadgeBulkCell(row, '');
         if (record.issues.length === 0) {
-            issueCell.textContent = 'Sin errores.';
+            issueCell.textContent = t('badgeBulk.noIssues');
         } else {
             const list = document.createElement('ul');
             record.issues.forEach(issue => {
                 const item = document.createElement('li');
-                item.textContent = `Línea ${issue.line}: ${issue.message}`;
+                item.textContent = t('badgeBulk.lineIssue', { line: issue.line, message: issue.message });
                 list.appendChild(item);
             });
             issueCell.appendChild(list);
@@ -7355,7 +8768,7 @@ function renderBadgeBulkPreview() {
 
         const actionCell = appendBadgeBulkCell(row, '');
         const actionSelect = document.createElement('select');
-        actionSelect.setAttribute('aria-label', `Acción para SteamID ${record.normalizedSteamId || record.recordNumber}`);
+        actionSelect.setAttribute('aria-label', t('badgeBulk.actionFor', { id: record.normalizedSteamId || record.recordNumber }));
         getBadgeBulkActionOptions(record).forEach(([value, label]) => {
             const option = document.createElement('option');
             option.value = value;
@@ -7376,13 +8789,13 @@ function renderBadgeBulkPreview() {
 
 function analyzeBadgeBulkInput() {
     if (!hasLoadedRemoteAdmin || currentMode !== 'ra') {
-        alert('Primero carga una configuración válida de RemoteAdmin.');
+        alert(t('export.needPreview'));
         return;
     }
     const text = badgeBulkInput?.value || '';
     if (!text.trim()) {
         invalidateBadgeBulkPreview();
-        if (badgeBulkSummary) badgeBulkSummary.textContent = 'Pega al menos un registro para analizarlo.';
+        if (badgeBulkSummary) badgeBulkSummary.textContent = t('badgeBulk.needRecords');
         return;
     }
     const records = parseBadgeBulkText(text);
@@ -7395,7 +8808,7 @@ function analyzeBadgeBulkInput() {
 
 function openBadgeBulkModal() {
     if (!hasLoadedRemoteAdmin || currentMode !== 'ra') {
-        alert('Primero carga una configuración válida de RemoteAdmin.');
+        alert(t('export.needPreview'));
         return;
     }
     populateBadgeBulkTargetGroups();
@@ -7427,7 +8840,7 @@ if (badgeBulkTargetGroup) {
 if (btnConfirmBadges) {
     btnConfirmBadges.addEventListener('click', () => {
         if (badgeBulkPreviewRevision !== remoteAdminRevision) {
-            alert('La configuración RemoteAdmin cambió después de la vista previa. Analiza nuevamente los registros.');
+            alert(t('badgeBulk.changedAfter'));
             invalidateBadgeBulkPreview();
             return;
         }
@@ -7453,13 +8866,13 @@ if (btnConfirmBadges) {
                 .map(record => {
                     const issue = createBulkIssue(
                         'MULTIPLE_MUTATIONS_SAME_STEAM_ID', 'error', record.startLine,
-                        `Selecciona una sola acción de reemplazo o actualización para el SteamID ${record.normalizedSteamId}.`
+                        t('badgeIssue.multiMutations', { steam: record.normalizedSteamId })
                     );
                     issue.recordNumber = record.recordNumber;
                     return issue;
                 });
             appendBadgeBulkApplyIssues({ invalid: decisionIssues.length, issues: decisionIssues });
-            alert('Hay varias acciones mutantes para el mismo SteamID. Conserva solo una antes de confirmar.');
+            alert(t('badgeBulk.multiMutationsAlert'));
             return;
         }
         const conflictingSharedImports = getConflictingSharedRoleImports(
@@ -7472,21 +8885,22 @@ if (btnConfirmBadges) {
             const decisionIssues = conflictingSharedImports.map(record => {
                 const issue = createBulkIssue(
                     'MULTIPLE_SHARED_ROLE_SIGNATURES', 'error', record.startLine,
-                    `Selecciona una sola combinación de badge y color para el rol compartido ${badgeBulkTargetGroup.value}.`
+                    t('badgeIssue.multiShared', { group: badgeBulkTargetGroup.value })
                 );
                 issue.recordNumber = record.recordNumber;
                 return issue;
             });
             appendBadgeBulkApplyIssues({ invalid: decisionIssues.length, issues: decisionIssues });
-            alert('Hay varias combinaciones de badge y color seleccionadas para el mismo rol compartido. Conserva solo una.');
+            alert(t('badgeBulk.multiSharedAlert'));
             return;
         }
         const result = applyBadgeBulkImport(refreshedRecords, { targetGroup: badgeBulkTargetGroup.value });
         const changed = result.imported + result.replaced + result.updated;
         alert(
-            `Carga finalizada: ${result.imported} añadido(s), ${result.replaced} reemplazado(s), `
-            + `${result.updated} actualizado(s), ${result.omitted} omitido(s), `
-            + `${result.cancelled} cancelado(s) y ${result.invalid} inválido(s).`
+            t('badgeBulk.finished', {
+                imported: result.imported, replaced: result.replaced, updated: result.updated,
+                omitted: result.omitted, cancelled: result.cancelled, invalid: result.invalid
+            })
         );
         if (changed > 0 && result.invalid === 0 && result.issues.length === 0) {
             badgeBulkInput.value = '';
@@ -7502,3 +8916,22 @@ if (btnConfirmBadges) {
         }
     });
 }
+
+// ============================
+// Init idioma / Language init
+// ============================
+(function initLanguage() {
+    try {
+        const langSelect = (typeof document !== 'undefined' && typeof document.getElementById === 'function')
+            ? document.getElementById('lang-select') : null;
+        if (langSelect && typeof langSelect.addEventListener === 'function') {
+            langSelect.addEventListener('change', () => {
+                const next = langSelect.value;
+                if (next && next !== currentLang) setLanguage(next);
+            });
+        }
+    } catch (_) {}
+    try {
+        applyI18n();
+    } catch (_) {}
+})();
