@@ -1,0 +1,12 @@
+{
+  "name": "scp-sl-config-manager",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/app.logic.test.cjs",
+    "check": "node --check app.js && node --test tests/app.logic.test.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

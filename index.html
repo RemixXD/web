@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f1115">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+    <meta name="referrer" content="no-referrer">
+    <title>SCP:SL Remote Admin Config Manager</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/regular/style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/fill/style.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="logo">
+            <i class="ph-fill ph-shield-check"></i>
+            <div class="logo-text">
+                <h1>SCP:SL Config Manager</h1>
+                <span class="author">by JuanSAYAMAN y Remix</span>
+            </div>
+            <span class="mode-badge" id="mode-badge" style="display: none;" data-i18n="mode.ra">🛡️ Modo: Remote Admin</span>
+        </div>
+        <div class="header-actions">
+            <label class="sr-only" for="lang-select" data-i18n="nav.language">Idioma</label>
+            <select id="lang-select" class="btn btn-secondary" data-i18n-aria="nav.language" aria-label="Idioma" data-i18n-title="nav.language" title="Idioma">
+                <option value="es">Español</option>
+                <option value="en">English</option>
+            </select>
+            <button type="button" id="btn-import-view" class="btn btn-secondary active" data-i18n="nav.import">Importar</button>
+            <button type="button" id="btn-editor-view" class="btn btn-secondary" disabled data-i18n="nav.editor">Editor</button>
+            <button type="button" id="btn-generate" class="btn btn-primary" disabled><i class="ph ph-magic-wand" aria-hidden="true"></i> <span data-i18n="header.exportRa">Exportar RemoteAdmin</span></button>
+            <button type="button" id="btn-export-exiled" class="btn btn-secondary" disabled data-i18n="header.exiled">Permissions EXILED</button>
+            <button type="button" id="btn-export-labapi" class="btn btn-secondary" disabled data-i18n="header.labapi">Permissions Lab API</button>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <!-- View: Import -->
+        <section id="view-import" class="view-section active" aria-hidden="false">
+            <div class="card import-card">
+                <h2 data-i18n="importView.title">Importar Configuración Actual</h2>
+                <p data-i18n="importView.desc">Pega aquí el contenido completo de tu archivo de configuración del Remote Admin (config_remoteadmin.txt).</p>
+                <label class="sr-only" for="config-input" data-i18n="importView.configLabel">Contenido de la configuración</label>
+                <textarea id="config-input" data-i18n-ph="importView.configPh" placeholder="# Pega aquí tu configuración..." spellcheck="false"></textarea>
+                <div class="import-actions" style="display: flex; gap: 16px; width: 100%; flex-wrap: wrap;">
+                    <button type="button" id="btn-parse" class="btn btn-primary btn-large" style="flex: 1; white-space: nowrap;"><i class="ph ph-magic-wand" aria-hidden="true"></i> <span data-i18n="importView.parse">Leer Configuración</span></button>
+                    <input type="file" id="file-upload" class="sr-only" accept=".txt">
+                    <label for="file-upload" id="btn-upload-file" class="btn btn-secondary btn-large" style="flex: 1; white-space: nowrap; cursor: pointer; text-align: center; justify-content: center;"><i class="ph ph-upload-simple" aria-hidden="true"></i> <span data-i18n="importView.upload">Subir Archivo .txt</span></label>
+                </div>
+            </div>
+        </section>
+
+        <!-- View: Editor -->
+        <section id="view-editor" class="view-section" aria-hidden="true" inert>
+            <div class="editor-layout accordion-layout">
+                <div class="accordion-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; width: 100%; flex-wrap: wrap; gap: 12px;">
+                    <h2 style="margin: 0; font-size: 1.5rem;" data-i18n="editor.title">Grupos & Miembros</h2>
+                    <div class="accordion-header-actions" style="display: flex; gap: 12px; align-items: center; flex: 1; justify-content: flex-end; min-width: 250px;">
+                        <span id="remoteadmin-health" class="remoteadmin-health is-pending" role="status" aria-live="polite">Sin validar</span>
+                        <div class="search-box" style="flex: 1; max-width: 300px;">
+                            <i class="ph ph-magnifying-glass"></i>
+                            <input type="search" id="search-input" data-i18n-ph="editor.searchPh" placeholder="Buscar miembro..." autocomplete="off" data-i18n-aria="editor.searchAria" aria-label="Buscar miembro">
+                        </div>
+                        <button type="button" class="btn btn-secondary" id="btn-validate-remoteadmin"><i class="ph ph-check-circle" aria-hidden="true"></i> <span data-i18n="editor.validate">Validar RemoteAdmin</span></button>
+                        <button type="button" class="btn btn-secondary" id="btn-repair-remoteadmin"><i class="ph ph-wrench" aria-hidden="true"></i> <span data-i18n="editor.repair">Reparar RemoteAdmin</span></button>
+                        <button type="button" class="btn btn-secondary" id="btn-badge-bulk"><i class="ph ph-identification-badge" aria-hidden="true"></i> <span data-i18n="editor.badgeBulk">Carga masiva de badges</span></button>
+                        <button type="button" class="btn btn-primary" id="btn-add-category" data-i18n-title="editor.addCategoryTitle" title="Añadir Categoría"><i class="ph ph-plus" aria-hidden="true"></i> <span data-i18n="editor.addGroup">Añadir Grupo</span></button>
+                    </div>
+                </div>
+                <div class="accordion-container" id="ra-accordion" style="width: 100%; display: flex; flex-direction: column; gap: 12px;">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal for Generated Config -->
+    <div id="export-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="export-modal-title">
+        <div class="modal-content export-modal-content">
+            <div class="modal-header">
+                <h2 id="export-modal-title" data-i18n="export.modalTitle">Nueva Configuración Generada</h2>
+                <button type="button" id="btn-close-modal" class="btn-icon" data-i18n-aria="export.closeAria" aria-label="Cerrar configuración generada"><i class="ph ph-x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body">
+                <section id="export-preview-summary" class="export-preview-summary" aria-labelledby="export-preview-summary-title">
+                    <div class="export-preview-heading">
+                        <div>
+                            <h3 id="export-preview-summary-title" data-i18n="export.summaryTitle">Resumen de exportación</h3>
+                            <p><span data-i18n="export.framework">Framework de destino:</span> <strong id="export-preview-framework">Remote Admin</strong></p>
+                        </div>
+                        <div class="export-preview-stats" data-i18n-aria="export.statsAria" aria-label="Totales de la exportación">
+                            <div class="export-stat"><span id="export-stat-users">0</span><small data-i18n="export.statUsers">Usuarios</small></div>
+                            <div class="export-stat"><span id="export-stat-groups">0</span><small data-i18n="export.statGroups">Grupos exportados</small></div>
+                            <div class="export-stat"><span id="export-stat-permissions">0</span><small data-i18n="export.statPerms">Permisos únicos</small></div>
+                        </div>
+                    </div>
+                    <div class="export-preview-options">
+                        <div id="remoteadmin-export-options" class="remoteadmin-export-options" data-i18n-aria="export.raOptionsAria" aria-label="Opciones de exportación RemoteAdmin" hidden>
+                            <div class="remoteadmin-export-fields">
+                                <div class="form-group remoteadmin-export-filename-field">
+                                    <label for="remoteadmin-export-filename" data-i18n="export.filename">Nombre del archivo</label>
+                                    <input type="text" id="remoteadmin-export-filename" value="config_remoteadmin.txt" maxlength="255" autocomplete="off" spellcheck="false" aria-describedby="remoteadmin-export-filename-help">
+                                    <small id="remoteadmin-export-filename-help" data-i18n="export.filenameHelp">Se conservará el nombre del archivo importado siempre que sea posible.</small>
+                                </div>
+                                <div class="remoteadmin-export-format-field">
+                                    <span class="remoteadmin-export-field-label" data-i18n="export.formatLabel">Formato detectado</span>
+                                    <strong id="remoteadmin-export-format">RemoteAdmin (.txt)</strong>
+                                    <small data-i18n="export.formatHelp">Texto compatible con la configuración cargada.</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="permissions-export-options" class="form-group export-policy-field">
+                            <label for="export-permission-policy" data-i18n="export.policy">Política para permisos sin equivalencia</label>
+                            <select id="export-permission-policy" aria-describedby="export-permission-policy-help">
+                                <option value="safe" selected data-i18n="export.policySafe">Conversión segura (recomendada)</option>
+                                <option value="wildcard" data-i18n="export.policyWildcard">Comodín/referencia explícita (.*)</option>
+                            </select>
+                            <small id="export-permission-policy-help" data-i18n="export.policyHelp">La opción segura conserva únicamente permisos con equivalencia conocida.</small>
+                        </div>
+                        <div class="export-warning-region">
+                            <h4 data-i18n="common.warnings">Advertencias</h4>
+                            <div id="export-preview-warnings" class="export-preview-warnings" role="status" aria-live="polite">Sin advertencias.</div>
+                        </div>
+                    </div>
+                </section>
+                <section id="remoteadmin-organization-panel" class="remoteadmin-organization-panel" aria-labelledby="remoteadmin-organization-title" hidden>
+                    <div class="remoteadmin-organization-heading">
+                        <div>
+                            <h3 id="remoteadmin-organization-title" data-i18n="org.compareTitle">Comparación de organización</h3>
+                            <p id="remoteadmin-organization-status">Analizando la estructura RemoteAdmin…</p>
+                        </div>
+                        <div id="remoteadmin-organization-metrics" class="remoteadmin-organization-metrics" aria-label="Resumen de cambios"></div>
+                    </div>
+                    <div id="remoteadmin-organization-issues" class="remoteadmin-organization-issues" role="status" aria-live="polite"></div>
+                    <div class="remoteadmin-organization-comparison">
+                        <div class="remoteadmin-organization-column">
+                            <label for="remoteadmin-organization-original" data-i18n="org.original">Original</label>
+                            <textarea id="remoteadmin-organization-original" readonly spellcheck="false"></textarea>
+                        </div>
+                        <div class="remoteadmin-organization-column">
+                            <label for="remoteadmin-organization-organized" data-i18n="org.organized">Organizado</label>
+                            <textarea id="remoteadmin-organization-organized" readonly spellcheck="false"></textarea>
+                        </div>
+                    </div>
+                </section>
+                <section id="remoteadmin-id-renumber-panel" class="remoteadmin-id-renumber-panel" aria-labelledby="remoteadmin-id-renumber-title" hidden>
+                    <div class="remoteadmin-organization-heading">
+                        <div>
+                            <h3 id="remoteadmin-id-renumber-title" data-i18n="ren.previewTitle">Previsualización de IDs</h3>
+                            <p id="remoteadmin-id-renumber-status">Analizando IDs internas y referencias…</p>
+                        </div>
+                        <div id="remoteadmin-id-renumber-metrics" class="remoteadmin-organization-metrics" aria-label="Resumen de renumeración"></div>
+                    </div>
+                    <div class="remoteadmin-id-renumber-options" role="group" aria-label="Opciones de reorganización">
+                        <label class="remoteadmin-id-renumber-option" for="remoteadmin-renumber-opt-reuse-declared">
+                            <input type="checkbox" id="remoteadmin-renumber-opt-reuse-declared" checked>
+                            <span data-i18n="ren.optReuseDeclared">Reutilizar IDs declaradas pero no utilizadas</span>
+                        </label>
+                        <label class="remoteadmin-id-renumber-option" for="remoteadmin-renumber-opt-use-undeclared">
+                            <input type="checkbox" id="remoteadmin-renumber-opt-use-undeclared" checked>
+                            <span data-i18n="ren.optUseUndeclared">Utilizar IDs no declaradas disponibles</span>
+                        </label>
+                        <label class="remoteadmin-id-renumber-option" for="remoteadmin-renumber-opt-respect-reserved">
+                            <input type="checkbox" id="remoteadmin-renumber-opt-respect-reserved" checked>
+                            <span data-i18n="ren.optRespectReserved">Respetar IDs reservadas</span>
+                        </label>
+                        <label class="remoteadmin-id-renumber-option" for="remoteadmin-renumber-opt-update-refs">
+                            <input type="checkbox" id="remoteadmin-renumber-opt-update-refs" checked>
+                            <span data-i18n="ren.optUpdateRefs">Actualizar todas las referencias</span>
+                        </label>
+                        <label class="remoteadmin-id-renumber-option" for="remoteadmin-renumber-opt-validate">
+                            <input type="checkbox" id="remoteadmin-renumber-opt-validate" checked>
+                            <span data-i18n="ren.optValidate">Validar después de reorganizar</span>
+                        </label>
+                    </div>
+                    <div id="remoteadmin-id-renumber-available-summary" class="remoteadmin-id-renumber-available-summary" data-i18n-aria="ren.availableAria" aria-label="IDs disponibles detectadas"></div>
+                    <div id="remoteadmin-id-renumber-ranges" class="remoteadmin-id-renumber-ranges" data-i18n-aria="ren.rangesAria" aria-label="Estado por rango"></div>
+                    <label class="remoteadmin-id-renumber-filter" for="remoteadmin-id-renumber-only-changed">
+                        <input type="checkbox" id="remoteadmin-id-renumber-only-changed" checked>
+                        <span data-i18n="ren.onlyChanged">Mostrar solo IDs modificadas</span>
+                    </label>
+                    <div class="remoteadmin-id-renumber-table-wrap">
+                        <table class="remoteadmin-id-renumber-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col" data-i18n="ren.thRange">Rango</th>
+                                    <th scope="col" data-i18n="ren.thOld">ID actual</th>
+                                    <th scope="col" data-i18n="ren.thNew">ID nueva</th>
+                                    <th scope="col" data-i18n="ren.thUser">Usuario</th>
+                                    <th scope="col" data-i18n="ren.thStatus">Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="remoteadmin-id-renumber-body"></tbody>
+                        </table>
+                    </div>
+                    <div id="remoteadmin-id-renumber-issues" class="remoteadmin-organization-issues" role="status" aria-live="polite"></div>
+                    <details class="remoteadmin-id-renumber-code">
+                        <summary data-i18n="ren.reviewCode">Revisar código completo antes y después</summary>
+                        <div class="remoteadmin-organization-comparison">
+                            <div class="remoteadmin-organization-column">
+                                <label for="remoteadmin-id-renumber-original" data-i18n="ren.current">Actual</label>
+                                <textarea id="remoteadmin-id-renumber-original" readonly spellcheck="false"></textarea>
+                            </div>
+                            <div class="remoteadmin-organization-column">
+                                <label for="remoteadmin-id-renumber-result" data-i18n="ren.renumbered">Renumerado</label>
+                                <textarea id="remoteadmin-id-renumber-result" readonly spellcheck="false"></textarea>
+                            </div>
+                        </div>
+                    </details>
+                </section>
+                <div id="export-standard-preview">
+                    <div class="config-tabs" role="tablist" aria-label="Formatos de exportación" style="display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border-color);">
+                        <button type="button" id="tab-config" role="tab" aria-selected="true" aria-controls="config-output" class="btn btn-secondary active tab-btn" data-target="config-output" style="border-radius: var(--radius-sm) var(--radius-sm) 0 0; border-bottom: none;">Remote Admin</button>
+                        <button type="button" id="tab-exiled" role="tab" aria-selected="false" aria-controls="exiled-output" class="btn btn-secondary tab-btn" data-target="exiled-output" style="border-radius: var(--radius-sm) var(--radius-sm) 0 0; border-bottom: none;">Permissions EXILED</button>
+                        <button type="button" id="tab-labapi" role="tab" aria-selected="false" aria-controls="labapi-output" class="btn btn-secondary tab-btn" data-target="labapi-output" style="border-radius: var(--radius-sm) var(--radius-sm) 0 0; border-bottom: none;">Permissions Lab API</button>
+                    </div>
+                    <textarea id="config-output" role="tabpanel" aria-labelledby="tab-config" class="tab-content active" readonly style="height: 400px; display: block;"></textarea>
+                    <textarea id="exiled-output" role="tabpanel" aria-labelledby="tab-exiled" class="tab-content" readonly style="height: 400px; display: none;"></textarea>
+                    <textarea id="labapi-output" role="tabpanel" aria-labelledby="tab-labapi" class="tab-content" readonly style="height: 400px; display: none;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 16px; flex-wrap: wrap;">
+                <button type="button" id="btn-cancel-export" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+                <button type="button" id="btn-open-diagnostics-export" class="btn btn-secondary"><i class="ph ph-stethoscope" aria-hidden="true"></i> <span data-i18n="export.diagnostics">Diagnóstico</span></button>
+                <button type="button" id="btn-organize-remoteadmin" class="btn btn-secondary" data-i18n="export.organize">Organizar RemoteAdmin</button>
+                <button type="button" id="btn-renumber-remoteadmin" class="btn btn-secondary" data-i18n="export.renumber">Reorganizar IDs</button>
+                <button type="button" id="btn-undo-id-renumber" class="btn btn-secondary" hidden data-i18n="export.undoRenumber">Deshacer reorganización</button>
+                <button type="button" id="btn-cancel-remoteadmin-organization" class="btn btn-secondary" hidden data-i18n="export.cancelOrg">Cancelar organización</button>
+                <button type="button" id="btn-apply-remoteadmin-organization" class="btn btn-primary" hidden data-i18n="export.applyOrg">Aplicar organización</button>
+                <button type="button" id="btn-cancel-id-renumber" class="btn btn-secondary" hidden data-i18n="common.cancel">Cancelar</button>
+                <button type="button" id="btn-apply-id-renumber" class="btn btn-primary" hidden data-i18n="export.applyRenumber">Aplicar reorganización</button>
+                <button type="button" id="btn-copy" class="btn btn-primary" style="flex: 1; white-space: nowrap;"><i class="ph ph-copy" aria-hidden="true"></i> <span data-i18n="export.copyTab">Copiar Pestaña Actual</span></button>
+                <button type="button" id="btn-download" class="btn btn-success" style="flex: 1; white-space: nowrap;"><i class="ph ph-download-simple" aria-hidden="true"></i> <span data-i18n="export.downloadTab">Descargar Pestaña Actual</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Centralized RemoteAdmin diagnostics -->
+    <div id="remoteadmin-diagnostics-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="remoteadmin-diagnostics-title">
+        <div class="modal-content remoteadmin-diagnostics-modal-content">
+            <div class="modal-header">
+                <div>
+                    <h2 id="remoteadmin-diagnostics-title" data-i18n="diag.title">Diagnóstico RemoteAdmin</h2>
+                    <p id="remoteadmin-diagnostics-summary" class="diagnostics-summary">Analizando el contenido actual…</p>
+                </div>
+                <button type="button" id="btn-close-diagnostics" class="btn-icon" data-i18n-aria="diag.closeAria" aria-label="Cerrar diagnóstico"><i class="ph ph-x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body remoteadmin-diagnostics-body">
+                <div id="remoteadmin-diagnostics-counts" class="diagnostics-counts" data-i18n-aria="diag.countsAria" aria-label="Totales del diagnóstico"></div>
+                <div class="diagnostics-toolbar">
+                    <div class="search-box diagnostics-search-box">
+                        <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
+                        <input type="search" id="remoteadmin-diagnostics-search" data-i18n-ph="diag.searchPh" placeholder="Buscar código, ID, usuario o mensaje…" autocomplete="off" data-i18n-aria="diag.searchAria" aria-label="Buscar diagnóstico">
+                    </div>
+                    <label class="form-group diagnostics-filter-field" for="remoteadmin-diagnostics-filter">
+                        <span data-i18n="diag.show">Mostrar</span>
+                        <select id="remoteadmin-diagnostics-filter">
+                            <option value="all" data-i18n="diag.filterAll">Todos</option>
+                            <option value="error" data-i18n="diag.filterError">Errores críticos</option>
+                            <option value="warning" data-i18n="diag.filterWarning">Advertencias</option>
+                            <option value="info" data-i18n="diag.filterInfo">Información</option>
+                            <option value="safe" data-i18n="diag.filterSafe">Reparación segura</option>
+                            <option value="confirm" data-i18n="diag.filterConfirm">Requieren decisión</option>
+                        </select>
+                    </label>
+                    <div class="diagnostics-selection-actions" data-i18n-aria="diag.selectionAria" aria-label="Selección de problemas">
+                        <button type="button" id="btn-select-visible-diagnostics" class="btn btn-secondary" data-i18n="diag.selectVisible">Seleccionar visibles</button>
+                        <button type="button" id="btn-clear-diagnostic-selection" class="btn btn-secondary" data-i18n="diag.clearSelection">Limpiar selección</button>
+                    </div>
+                </div>
+                <div id="remoteadmin-diagnostics-list" class="diagnostics-list" role="list" aria-live="polite"></div>
+            </div>
+            <div class="modal-footer diagnostics-footer">
+                <button type="button" id="btn-undo-repair" class="btn btn-secondary" data-i18n="diag.undoRepair">Deshacer última reparación</button>
+                <button type="button" id="btn-undo-all-repairs" class="btn btn-secondary" data-i18n="diag.undoAll">Deshacer todos los cambios</button>
+                <button type="button" id="btn-restore-remoteadmin-original" class="btn btn-secondary" data-i18n="diag.restoreOriginal">Restaurar original</button>
+                <button type="button" id="btn-resolve-selected" class="btn btn-primary" data-i18n="diag.resolveSelected">Resolver seleccionados</button>
+                <button type="button" id="btn-resolve-safe" class="btn btn-success" data-i18n="diag.resolveSafe">Resolver problemas seguros</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Bulk Add -->
+    <div id="bulk-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="bulk-modal-title">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="bulk-modal-title" data-i18n="bulk.title">Carga Masiva de Miembros</h2>
+                <button type="button" id="btn-close-bulk-modal" class="btn-icon" data-i18n-aria="bulk.closeAria" aria-label="Cerrar carga masiva"><i class="ph ph-x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 12px; color: var(--text-muted); font-size: 0.9rem;"><span data-i18n="bulk.descA">Pega tu lista de miembros. El sistema extraerá automáticamente el</span> <strong data-i18n="bulk.ids">SteamID/DiscordID</strong> <span data-i18n="bulk.and">y el</span> <strong data-i18n="bulk.name">Nombre</strong>.</p>
+                <label class="sr-only" for="bulk-input" data-i18n="bulk.listLabel">Lista de miembros</label>
+                <textarea id="bulk-input" data-i18n-ph="bulk.inputPh" placeholder="Ej:&#10;76561198841587908@steam YAN&#10;123456789012345678@discord Usuario Dos" style="height: 200px; font-family: var(--font-mono);"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="btn-process-bulk" style="width: 100%;"><i class="ph ph-users"></i> <span data-i18n="bulk.process">Procesar y Añadir</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Bulk Badge Import -->
+    <div id="badge-bulk-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="badge-bulk-modal-title">
+        <div class="modal-content badge-bulk-modal-content">
+            <div class="modal-header">
+                <h2 id="badge-bulk-modal-title" data-i18n="badgeBulk.title">Carga masiva de badges</h2>
+                <button type="button" id="btn-close-badge-bulk" class="btn-icon" data-i18n-aria="badgeBulk.closeAria" aria-label="Cerrar carga masiva de badges"><i class="ph ph-x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body badge-bulk-modal-body">
+                <p class="badge-bulk-intro" data-i18n="badgeBulk.intro">Pega uno o varios registros. Los datos se analizarán y previsualizarán antes de modificar la configuración actual.</p>
+
+                <div class="badge-bulk-input-grid">
+                    <div class="form-group badge-bulk-text-field">
+                        <label for="badge-bulk-input" data-i18n="badgeBulk.inputLabel">Registros de badges</label>
+                        <textarea id="badge-bulk-input" spellcheck="false" data-i18n-ph="badgeBulk.inputPh" placeholder="badge de: @Endercruz&#10;_badge: Endercruz&#10;_color: orange&#10;_steamID: 76561199835925257"></textarea>
+                    </div>
+                    <div class="badge-bulk-side-controls">
+                        <div class="form-group">
+                            <label for="badge-bulk-target-group" data-i18n="badgeBulk.targetGroup">Grupo de destino</label>
+                            <select id="badge-bulk-target-group">
+                                <option value="">Selecciona un grupo</option>
+                            </select>
+                        </div>
+                        <div class="badge-bulk-analysis-actions">
+                            <button type="button" id="btn-analyze-badges" class="btn btn-primary"><i class="ph ph-magnifying-glass" aria-hidden="true"></i> <span data-i18n="badgeBulk.analyze">Analizar y previsualizar</span></button>
+                            <button type="button" id="btn-clear-badges" class="btn btn-secondary"><i class="ph ph-eraser" aria-hidden="true"></i> <span data-i18n="badgeBulk.clear">Limpiar</span></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="badge-bulk-summary" class="badge-bulk-summary" role="status" aria-live="polite" aria-atomic="true">
+                    Aún no hay registros analizados.
+                </div>
+
+                <div class="badge-bulk-preview" tabindex="0" role="region" data-i18n-aria="badgeBulk.previewAria" aria-label="Vista previa de la carga masiva de badges">
+                    <table class="badge-bulk-table">
+                        <caption class="sr-only" data-i18n="badgeBulk.caption">Registros analizados antes de confirmar la importación</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col" data-i18n="badgeBulk.thLine">Línea</th>
+                                <th scope="col" data-i18n="badgeBulk.thOwner">Nota o propietario</th>
+                                <th scope="col" data-i18n="badgeBulk.thBadge">Badge</th>
+                                <th scope="col" data-i18n="badgeBulk.thColor">Color</th>
+                                <th scope="col" data-i18n="badgeBulk.thSteam">SteamID64</th>
+                                <th scope="col" data-i18n="badgeBulk.thStatus">Estado</th>
+                                <th scope="col" data-i18n="badgeBulk.thIssue">Error o advertencia</th>
+                                <th scope="col" data-i18n="badgeBulk.thAction">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="badge-bulk-preview-body"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer badge-bulk-footer">
+                <button type="button" id="btn-cancel-badges" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+                <button type="button" id="btn-confirm-badges" class="btn btn-success" disabled><i class="ph ph-check" aria-hidden="true"></i> <span data-i18n="badgeBulk.confirm">Confirmar importación</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Permissions Modal -->
+    <div id="permissions-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="permissions-modal-title">
+        <div class="modal-content permissions-modal-content">
+            <div class="modal-header">
+                <h3 id="permissions-modal-title" data-i18n="perm.title">Permisos</h3>
+                <button type="button" class="btn-icon" id="btn-close-permissions-modal" data-i18n-aria="perm.closeAria" aria-label="Cerrar permisos"><i class="ph ph-x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="permissions-toolbar">
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-perm-check-all" data-i18n="perm.checkAll">Marcar Todos</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-perm-uncheck-all" data-i18n="perm.uncheckAll">Desmarcar Todos</button>
+                </div>
+                <div class="permissions-grid" id="permissions-grid">
+                    <!-- Checkboxes added dynamically via JS -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="btn-save-permissions" data-i18n="perm.save">Guardar Permisos</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal to Add/Edit Member -->
+    <div id="member-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="member-modal-title">
+        <div class="modal-content small-modal">
+            <div class="modal-header">
+                <h2 id="member-modal-title" data-i18n="member.addTitle">Añadir Miembro</h2>
+                <button type="button" id="btn-close-member-modal" class="btn-icon" data-i18n-aria="member.closeAria" aria-label="Cerrar formulario de miembro"><i class="ph ph-x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="member-form">
+                    <div class="form-group">
+                        <label for="member-name" data-i18n="member.name">Nombre</label>
+                        <input type="text" id="member-name" data-i18n-ph="member.namePh" placeholder="Ej. YAN" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="member-notes" data-i18n="member.notes">Notas / Comentarios (Opcional)</label>
+                        <input type="text" id="member-notes" data-i18n-ph="member.notesPh" placeholder="Ej. antes B3, vence 09 Junio..." autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="member-steamid" data-i18n="member.steamId">SteamID (Obligatorio)</label>
+                        <input type="text" id="member-steamid" data-i18n-ph="member.steamIdPh" placeholder="Ej. 76561198841587908@steam" required autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="member-badge" data-i18n="member.badge">Texto del Badge</label>
+                        <input type="text" id="member-badge" data-i18n-ph="member.badgePh" placeholder="Ej. SERVER OWNER" required autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="member-color" data-i18n="member.color">Color del Badge</label>
+                        <select id="member-color">
+                            <option value="pink">pink</option>
+                            <option value="red">red</option>
+                            <option value="brown">brown</option>
+                            <option value="silver">silver</option>
+                            <option value="light_green">light_green</option>
+                            <option value="crimson">crimson</option>
+                            <option value="cyan">cyan</option>
+                            <option value="aqua">aqua</option>
+                            <option value="deep_pink">deep_pink</option>
+                            <option value="tomato">tomato</option>
+                            <option value="yellow">yellow</option>
+                            <option value="magenta">magenta</option>
+                            <option value="blue_green">blue_green</option>
+                            <option value="orange">orange</option>
+                            <option value="lime">lime</option>
+                            <option value="green">green</option>
+                            <option value="emerald">emerald</option>
+                            <option value="carmine">carmine</option>
+                            <option value="nickel">nickel</option>
+                            <option value="mint">mint</option>
+                            <option value="army_green">army_green</option>
+                            <option value="pumpkin">pumpkin</option>
+                            <option value="default">default</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="member-kick-power" data-i18n="member.kickPower">Kick Power</label>
+                            <input type="number" id="member-kick-power" value="1" min="0" max="255" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="member-req-kick" data-i18n="member.reqKick">Req. Kick Power</label>
+                            <input type="number" id="member-req-kick" value="1" min="0" max="255" required>
+                        </div>
+                    </div>
+                    <div class="form-row checkbox-row">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="member-cover" checked>
+                            <span data-i18n="member.cover">Cover</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="member-hidden">
+                            <span data-i18n="member.hidden">Hidden</span>
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="member-form" id="btn-save-member" class="btn btn-primary" data-i18n="common.save">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal to Promote Member -->
+    <div id="promote-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="promote-modal-title">
+        <div class="modal-content small-modal">
+            <div class="modal-header">
+                <h2 id="promote-modal-title"><span data-i18n="promote.title">Ascender a</span> <span id="promote-member-name" style="color: var(--primary-color);"></span></h2>
+                <button type="button" id="btn-close-promote-modal" class="btn-icon" data-i18n-aria="promote.closeAria" aria-label="Cerrar ventana de ascenso"><i class="ph ph-x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="promote-form">
+                    <div class="form-group">
+                        <label for="promote-target-group" data-i18n="promote.targetGroup">Grupo de destino</label>
+                        <select id="promote-target-group" required></select>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 8px;" data-i18n="promote.desc">El miembro mantendrá su badge (actualizando el rango), color, cover y hidden. Adoptará los permisos, Kick Power y Required Kick Power del grupo destino.</p>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="btn-cancel-promote" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+                <button type="submit" form="promote-form" id="btn-confirm-promote" class="btn btn-success"><i class="ph ph-arrow-fat-line-up"></i> <span data-i18n="promote.confirm">Confirmar Ascenso</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal to Demote Member -->
+    <div id="demote-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="demote-modal-title">
+        <div class="modal-content small-modal">
+            <div class="modal-header">
+                <h2 id="demote-modal-title"><span data-i18n="demote.title">Descender a</span> <span id="demote-member-name" style="color: var(--danger-color);"></span></h2>
+                <button type="button" id="btn-close-demote-modal" class="btn-icon" data-i18n-aria="demote.closeAria" aria-label="Cerrar ventana de descenso"><i class="ph ph-x" aria-hidden="true"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="demote-form">
+                    <div class="form-group">
+                        <label for="demote-target-group" data-i18n="demote.targetGroup">Grupo de destino</label>
+                        <select id="demote-target-group" required></select>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 8px;" data-i18n="demote.desc">El miembro mantendrá su badge (actualizando el rango), color, cover y hidden. Adoptará los permisos, Kick Power y Required Kick Power del grupo destino.</p>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="btn-cancel-demote" class="btn btn-secondary" data-i18n="common.cancel">Cancelar</button>
+                <button type="submit" form="demote-form" id="btn-confirm-demote" class="btn btn-danger"><i class="ph ph-arrow-fat-line-down"></i> <span data-i18n="demote.confirm">Confirmar Descenso</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Template for member cards -->
+    <template id="member-card-template">
+        <div class="member-card">
+            <div class="member-card-header">
+                <span class="member-role-badge">A1</span>
+                <div class="member-actions">
+                    <button class="btn-icon btn-permissions" title="Permisos"><i class="ph ph-key"></i></button>
+                    <button class="btn-icon btn-edit" title="Editar Miembro"><i class="ph ph-pencil-simple"></i></button>
+                    <button class="btn-icon btn-delete" title="Eliminar Miembro"><i class="ph ph-trash"></i></button>
+                </div>
+            </div>
+            <div class="member-card-body">
+                <h4 class="member-name">Name</h4>
+                <div class="member-notes" style="font-size: 0.75rem; color: var(--text-muted); margin-top: -4px; margin-bottom: 4px; font-style: italic;"></div>
+                <div class="member-detail">
+                    <i class="ph ph-identification-card"></i>
+                    <span class="member-steamid">ID</span>
+                </div>
+                <div class="member-badge-preview">
+                    <span class="badge-text">Badge Text</span>
+                </div>
+                <div class="member-stats">
+                    <span class="stat" title="Kick Power"><i class="ph ph-boot"></i> <span class="kp">0</span></span>
+                    <span class="stat" title="Required Kick Power"><i class="ph ph-shield"></i> <span class="rkp">0</span></span>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- SortableJS for Drag and Drop -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
