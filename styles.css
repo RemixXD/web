@@ -1870,3 +1870,422 @@ label[for="file-upload"]:focus-visible {
         animation-iteration-count: 1 !important;
     }
 }
+
+/* ============================================================
+   Diseño adaptable universal
+   Teléfonos, tablets, pantallas verticales (portrait),
+   landscape bajo, táctil y áreas seguras (notch).
+   Se suma a los ajustes existentes sin reemplazarlos.
+   ============================================================ */
+
+/* ---------- Base fluida y segura ---------- */
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    /* dvh evita saltos con la barra del navegador móvil (con vh de respaldo) */
+    height: 100dvh;
+}
+
+img, video, canvas {
+    max-width: 100%;
+    height: auto;
+}
+
+.modal {
+    /* Respira en teléfonos con notch o bordes redondeados */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.app-header {
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
+}
+
+.modal-content {
+    max-height: 90dvh;
+}
+
+.remoteadmin-diagnostics-modal-content {
+    max-height: 94dvh;
+}
+
+.tab-content {
+    height: 50dvh;
+}
+
+.badge-bulk-preview,
+.remoteadmin-id-renumber-table-wrap,
+.diagnostics-list,
+.modal-body {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+}
+
+/* ---------- Tablets y laptops pequeñas (≤1024px) ---------- */
+@media (max-width: 1024px) {
+    .accordion-layout {
+        max-width: 100%;
+    }
+
+    .diagnostics-counts {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .export-modal-content {
+        width: 94%;
+    }
+
+    .remoteadmin-diagnostics-modal-content {
+        width: min(1120px, 94vw);
+    }
+
+    .member-grid {
+        gap: 12px;
+    }
+
+    .modal-body {
+        padding: 20px;
+    }
+
+    .split-main {
+        padding: 20px;
+    }
+}
+
+/* ---------- Teléfonos y pantallas angostas (≤768px): refuerzo ---------- */
+@media (max-width: 768px) {
+    .logo h1 {
+        font-size: 1rem;
+    }
+
+    .logo i {
+        font-size: 1.4rem;
+    }
+
+    /* Evita el zoom automático de iOS al enfocar campos */
+    .search-box input,
+    .form-group input,
+    .form-group select,
+    #lang-select,
+    .import-card textarea,
+    .tab-content {
+        font-size: 16px;
+    }
+
+    .accordion-header-row {
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 12px 14px;
+    }
+
+    .accordion-title {
+        font-size: 1rem;
+        flex: 1 1 100%;
+    }
+
+    .accordion-actions {
+        flex-wrap: wrap;
+        margin-left: auto;
+    }
+
+    .member-list-header {
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 10px 12px;
+    }
+
+    .member-list-body,
+    .member-grid-card {
+        padding: 12px;
+    }
+
+    .card-actions {
+        flex-wrap: wrap;
+    }
+
+    .modal-header {
+        padding: 14px 16px;
+    }
+
+    .modal-header h2 {
+        font-size: 1.1rem;
+    }
+
+    .modal-header h3 {
+        font-size: 1rem;
+    }
+
+    .modal-body {
+        padding: 16px;
+    }
+
+    .modal-footer {
+        padding: 12px 16px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .permissions-toolbar {
+        flex-wrap: wrap;
+    }
+
+    .diagnostic-card {
+        grid-template-columns: 1fr;
+    }
+
+    .diagnostic-actions {
+        grid-column: 1;
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .diagnostic-select {
+        justify-self: start;
+    }
+
+    .badge-bulk-table,
+    .remoteadmin-id-renumber-table {
+        font-size: 0.75rem;
+    }
+
+    .badge-bulk-table th,
+    .badge-bulk-table td,
+    .remoteadmin-id-renumber-table th,
+    .remoteadmin-id-renumber-table td {
+        padding: 8px;
+    }
+
+    .badge-bulk-table td:nth-child(7) {
+        min-width: 140px;
+    }
+
+    .tab-content {
+        height: 40vh;
+        height: 40dvh;
+    }
+}
+
+/* ---------- Teléfonos pequeños (≤480px) ---------- */
+@media (max-width: 480px) {
+    .app-header {
+        padding: 12px;
+        gap: 8px;
+    }
+
+    .logo {
+        gap: 8px;
+    }
+
+    .logo h1 {
+        font-size: 0.95rem;
+    }
+
+    .logo i {
+        font-size: 1.3rem;
+    }
+
+    .logo-text .author {
+        display: none;
+    }
+
+    .header-actions {
+        gap: 6px;
+    }
+
+    .header-actions .btn {
+        font-size: 0.78rem;
+        padding: 8px;
+    }
+
+    .view-section {
+        padding: 8px;
+    }
+
+    .modal-content {
+        width: 100%;
+        margin: 0;
+        border-radius: 0;
+        max-height: 100dvh;
+    }
+
+    .export-modal-content,
+    .badge-bulk-modal-content,
+    .permissions-modal-content {
+        width: 100%;
+        margin: 0;
+        border-radius: 0;
+    }
+
+    .modal-header h2 {
+        font-size: 1.05rem;
+    }
+
+    .import-card {
+        padding: 12px;
+        border-radius: var(--radius-md);
+    }
+
+    .btn-large {
+        padding: 10px 16px;
+    }
+
+    .member-grid,
+    .members-grid,
+    .permissions-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .export-stat {
+        min-width: 0;
+        padding: 6px 4px;
+    }
+
+    .export-stat span {
+        font-size: 1rem;
+    }
+
+    .export-preview-summary {
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+}
+
+/* ---------- Pantallas verticales (portrait) ---------- */
+@media (orientation: portrait) and (max-width: 768px) {
+    .modal-content {
+        width: 100%;
+    }
+
+    .permissions-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .tab-content {
+        height: 38vh;
+        height: 38dvh;
+    }
+
+    .remoteadmin-organization-column textarea {
+        min-height: 220px;
+    }
+
+    .split-main-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+}
+
+/* ---------- Landscape bajo (teléfonos apaisados, pantallas cortas) ---------- */
+@media (max-height: 500px) {
+    .app-header {
+        padding: 8px 16px;
+    }
+
+    .logo h1 {
+        font-size: 1rem;
+    }
+
+    .logo i {
+        display: none;
+    }
+
+    .logo-text .author {
+        display: none;
+    }
+
+    .modal-content {
+        max-height: 98vh;
+        max-height: 98dvh;
+    }
+
+    .modal-header {
+        padding: 10px 16px;
+    }
+
+    .modal-body {
+        padding: 12px 16px;
+    }
+
+    .modal-footer {
+        padding: 8px 16px;
+    }
+
+    .view-section {
+        padding: 8px;
+    }
+
+    .import-card {
+        margin-top: 0;
+        padding: 16px;
+        gap: 10px;
+    }
+
+    .import-card textarea {
+        height: 140px;
+    }
+
+    .tab-content {
+        height: 46vh;
+        height: 46dvh;
+    }
+
+    .diagnostics-list {
+        max-height: 40vh;
+        max-height: 40dvh;
+    }
+}
+
+/* ---------- Táctil: áreas de toque amplias ---------- */
+@media (pointer: coarse) {
+    .sidebar-tab {
+        min-height: 48px;
+    }
+
+    .accordion-header-row {
+        min-height: 52px;
+    }
+
+    .member-list-header {
+        min-height: 52px;
+    }
+
+    .groups-sidebar li {
+        min-height: 48px;
+    }
+
+    .diagnostic-select {
+        width: 22px;
+        height: 22px;
+    }
+
+    input[type="checkbox"] {
+        min-width: 20px;
+        min-height: 20px;
+    }
+
+    .remoteadmin-id-renumber-option {
+        padding: 4px 0;
+    }
+}
+
+/* ---------- Sin hover (táctil): sin efectos pegajosos ---------- */
+@media (hover: none) {
+    .btn-primary:hover:not(:disabled),
+    .btn-success:hover:not(:disabled) {
+        transform: none;
+    }
+
+    .member-grid-card:hover,
+    .member-card:hover {
+        transform: none;
+    }
+}
